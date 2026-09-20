@@ -28,6 +28,11 @@ reason deep research across a broad universe is affordable. Screening a 2,200-co
 second and reads nothing; triage costs about a third of a cent per company; the deep dive costs real money
 and runs only on what survived both.
 
+Running alongside it, a **monitor** patrols a watchlist and says where to point that machinery next. Every
+check it makes is mechanical -- a new filing, an 8-K item number, a price move, a screen just entered,
+statements that stopped adding up -- so a patrol costs nothing and can run on a schedule. Detection is cheap;
+interpretation is expensive; the two are never swapped.
+
 Within a deep dive:
 
 ```
@@ -83,6 +88,11 @@ uv run python -m fin_research.screen run --screen quality_value --as-of 2020-09-
 # Screen, then read the survivors and decide which earn a deep dive. Costs a few cents.
 uv run python -m fin_research.screen funnel --screen quality_value --limit 20 --budget 1.00
 
+# Patrol a watchlist. No model involved, so run it as often as you like.
+uv run python -m fin_research.monitor watch --tickers AAPL KO NVDA
+uv run python -m fin_research.monitor patrol
+uv run python -m fin_research.monitor alerts
+
 # Research. This is the part that costs money.
 uv run python -m fin_research.agents roster
 uv run python -m fin_research.agents run --ticker AAPL --budget 2.00
@@ -103,6 +113,7 @@ uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
 | `agents/` | the nine agents and their prompts |
 | `report/` | markdown rendering with a numbered source appendix |
 | `screen/` | point-in-time factor screening over the attached market data, and the funnel |
+| `monitor/` | watchlist, mechanical change detection, and the alert ledger |
 | `web/` | FastAPI reading the run ledger, streaming it as server-sent events |
 
 Prices and fundamentals are not duplicated here: the `investalyze` database is attached read-only.
@@ -110,7 +121,7 @@ Prices and fundamentals are not duplicated here: the `investalyze` database is a
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **194 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **208 tests**, none of which touch a network
 or a provider.
 
 **Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against
