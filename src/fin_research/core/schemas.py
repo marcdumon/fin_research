@@ -252,19 +252,24 @@ class Triage(Strict):
 
 
 class Report(Strict):
-    """The finished research note."""
+    """The finished research note.
+
+    The valuation is not part of this schema. The valuation agent already produced one, and asking the
+    synthesiser to reproduce it wastes tokens and invites transcription error. It also made the schema deep
+    enough that one provider rejected the request outright -- structured output has nesting and size limits,
+    and a schema that embeds every other artifact reaches them. The renderer takes the stored valuation.
+    """
 
     ticker: str
     as_of: date
     thesis: str = Field(max_length=2000)
     direction: Literal['constructive', 'cautious', 'neutral']
     confidence: Literal['low', 'medium', 'high']
-    numbers: list[Finding] = Field(default_factory=list, max_length=12)
+    numbers: list[Claim] = Field(default_factory=list, max_length=12)
     bull_case: list[Claim] = Field(default_factory=list, max_length=12)
     bear_case: list[Claim] = Field(default_factory=list, max_length=12)
     falsifiers: list[str] = Field(default_factory=list, max_length=6)
     disagreements: list[Disagreement] = Field(default_factory=list, max_length=6)
-    valuation: Valuation | None = None
     generated_at: datetime | None = None
 
 

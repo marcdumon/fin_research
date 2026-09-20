@@ -11,7 +11,7 @@ because a perfect score on nothing is the most misleading number the system coul
 
 from dataclasses import dataclass
 
-from fin_research.core.schemas import Claim, MatchKind, Report
+from fin_research.core.schemas import Claim, MatchKind, Report, Valuation
 from fin_research.core.verification import SourceText, verify_evidence
 
 
@@ -75,9 +75,8 @@ def _claims(claims: list[Claim], citations: Citations) -> str:
     return '\n'.join(lines)
 
 
-def _valuation(report: Report) -> str:
+def _valuation(valuation: Valuation | None) -> str:
     """Render the valuation as a scenario table with its assumptions."""
-    valuation = report.valuation
     if valuation is None:
         return '_No valuation was produced._'
 
@@ -100,7 +99,7 @@ def _valuation(report: Report) -> str:
 
 def render(report: Report, sources: dict[str, SourceText], groundedness: float | None = None,
            cost_usd: float | None = None, match_kinds: dict[str, int] | None = None,
-           numeric: dict[str, int] | None = None) -> str:
+           numeric: dict[str, int] | None = None, valuation: Valuation | None = None) -> str:
     """Render the whole report.
 
     Order follows how a note is actually read: the conclusion first, then the numbers, then both sides of the
@@ -108,9 +107,8 @@ def render(report: Report, sources: dict[str, SourceText], groundedness: float |
     """
     citations = Citations(sources=sources)
 
-    numbers = '\n\n'.join(
-        f'**{finding.headline}**\n\n{finding.detail}\n\n{_claims(finding.claims, citations)}'
-        for finding in report.numbers) or '_No financial findings survived verification._'
+    numbers = _claims(report.numbers, citations) if report.numbers \
+        else '_No financial findings survived verification._'
 
     disagreements = '\n\n'.join(
         f'**{d.question}**\n\n- Constructive: {d.bull_position}\n- Sceptical: {d.bear_position}\n\n'
@@ -149,7 +147,7 @@ def render(report: Report, sources: dict[str, SourceText], groundedness: float |
 
 ## Valuation
 
-{_valuation(report)}
+{_valuation(valuation)}
 
 ## Sources
 

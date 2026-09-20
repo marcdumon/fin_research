@@ -14,6 +14,7 @@ re-spending.
 
 import json
 import logging
+import os
 import sqlite3
 import threading
 import uuid
@@ -41,7 +42,8 @@ CREATE TABLE IF NOT EXISTS runs (
     config_json TEXT NOT NULL,
     started_at  TEXT NOT NULL,
     finished_at TEXT,
-    error       TEXT
+    error       TEXT,
+    pid         INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -147,6 +149,24 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec='seconds')
 
 
+def _process_alive(pid: int | None) -> bool:
+    """Whether a process id is still running.
+
+    Signal 0 performs the permission and existence checks without delivering anything, which is the standard
+    way to ask. A process owned by another user reports as alive, which is the safe direction: a run is only
+    declared dead when it certainly is.
+    """
+    if not pid:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class State:
     """The operational database.
 
@@ -160,6 +180,18 @@ class State:
         self._con = sqlite3.connect(path, check_same_thread=False)
         self._con.row_factory = sqlite3.Row
         self._con.executescript(SCHEMA)
+        self._add_missing_columns()
+
+    def _add_missing_columns(self) -> None:
+        """Bring an existing database up to the current schema.
+
+        The tables are created with IF NOT EXISTS, so a column added later never appears in a database that
+        already exists. Adding them here keeps a working installation working across an upgrade.
+        """
+        existing = {row['name'] for row in self._con.execute('PRAGMA table_info(runs)')}
+        if 'pid' not in existing:
+            with self._con:
+                self._con.execute('ALTER TABLE runs ADD COLUMN pid INTEGER')
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -189,10 +221,26 @@ class State:
         """Open a run and return its id."""
         run_id = new_id()
         self._write(
-            'INSERT INTO runs (run_id, ticker, cik, as_of, status, budget_usd, config_json, started_at) '
-            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-            (run_id, ticker, cik, as_of.isoformat(), 'running', budget_usd, json.dumps(config or {}), _now()))
+            'INSERT INTO runs (run_id, ticker, cik, as_of, status, budget_usd, config_json, started_at, pid) '
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+            (run_id, ticker, cik, as_of.isoformat(), 'running', budget_usd, json.dumps(config or {}),
+             _now(), os.getpid()))
         return run_id
+
+    def reconcile(self) -> int:
+        """Close any run whose process is gone, and report how many were closed.
+
+        A run that is killed, crashes or is interrupted never gets to write its own final status, so its row
+        says 'running' indefinitely and the dashboard shows work that stopped hours ago. Nothing else detects
+        this: the ledger only records what a live process tells it.
+        """
+        stale = [row['run_id'] for row in self.query("SELECT run_id, pid FROM runs WHERE status = 'running'")
+                 if not _process_alive(row['pid'])]
+        for run_id in stale:
+            self.finish_run(run_id, 'interrupted', 'the process running it is no longer present')
+        if stale:
+            log.info(f'closed {len(stale)} run(s) whose process had gone')
+        return len(stale)
 
     def finish_run(self, run_id: str, status: str, error: str | None = None) -> None:
         """Close a run with a final status."""

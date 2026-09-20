@@ -103,7 +103,7 @@ def _report(document_id: str, quote: str) -> str:
                        'evidence': [{'kind': 'span', 'document_id': document_id, 'section_id': None,
                                      'quoted_text': quote, 'fact_id': None}]}],
         'falsifiers': ['Services revenue declines year over year'],
-        'valuation': json.loads(_valuation()), 'generated_at': None,
+        'generated_at': None,
     })
 
 

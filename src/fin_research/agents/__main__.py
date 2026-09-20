@@ -68,7 +68,8 @@ async def _run(args: argparse.Namespace) -> int:
                           match_kinds={k: v for result in outcome.results
                                        for k, v in result.verification.match_kinds().items()},
                           numeric={k: v for result in outcome.results
-                                   for k, v in result.verification.numeric_outcomes().items()})
+                                   for k, v in result.verification.numeric_outcomes().items()},
+                          valuation=outcome.valuation)
 
         destination = args.out or paths.PROJECT_ROOT / 'reports' / f'{args.ticker}_{as_of}.md'
         destination.parent.mkdir(parents=True, exist_ok=True)

@@ -166,9 +166,17 @@ class ModelClient:
                 return response.json()
             except (httpx.HTTPStatusError, httpx.TransportError) as error:
                 last = error
-                status = getattr(getattr(error, 'response', None), 'status_code', None)
+                response = getattr(error, 'response', None)
+                status = getattr(response, 'status_code', None)
                 if status is not None and status not in RETRYABLE_STATUS:
-                    raise ModelCallError(f'{status} from provider: {error}') from error
+                    # The body carries the reason. Without it the ledger records '400 from provider', which
+                    # says a request was malformed but not which part of it.
+                    detail = ''
+                    try:
+                        detail = (response.json().get('error', {}).get('message') or response.text)[:400]
+                    except Exception:
+                        detail = getattr(response, 'text', '')[:400]
+                    raise ModelCallError(f'{status} from provider: {detail}') from error
                 if attempt < MAX_ATTEMPTS - 1:
                     delay = BASE_RETRY_DELAY * BACKOFF_FACTOR ** attempt
                     log.warning(f'model call failed ({error}); retrying in {delay:.1f}s')

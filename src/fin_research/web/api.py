@@ -83,8 +83,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.get('/api/runs')
     def list_runs(limit: int = 50) -> list[dict]:
-        """Every run, newest first."""
+        """Every run, newest first.
+
+        Stale rows are closed first, so a run whose process was killed does not keep reporting itself as
+        working. The dashboard is where that would otherwise be seen and believed.
+        """
         with state() as store:
+            store.reconcile()
             return [dict(row) for row in store.query(
                 'SELECT r.run_id, r.ticker, r.status, r.as_of, r.budget_usd, r.spend_usd, r.started_at, '
                 'r.finished_at, (SELECT count(*) FROM llm_calls c WHERE c.run_id = r.run_id) AS calls '

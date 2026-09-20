@@ -261,3 +261,36 @@ def test_nothing_outside_the_client_talks_to_a_provider():
         if path.name != 'client.py' and any(marker in path.read_text() for marker in calling)
     ]
     assert offenders == [], f'these modules bypass the single call path: {offenders}'
+
+
+# --- runs whose process has gone ----------------------------------------------
+def test_a_run_whose_process_died_is_closed(state):
+    """Nothing else detects this: the ledger only records what a live process tells it."""
+    run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=2.0)
+    # A process id that cannot be running: the highest the kernel will allocate, plus one.
+    state._write('UPDATE runs SET pid = ? WHERE run_id = ?', (2 ** 22 + 1, run_id))
+
+    assert state.reconcile() == 1
+    assert state.run(run_id).status == 'interrupted'
+
+
+def test_a_live_run_is_left_alone(state):
+    """This process is running, so a run recording it must not be closed."""
+    run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=2.0)
+    assert state.reconcile() == 0
+    assert state.run(run_id).status == 'running'
+
+
+def test_a_finished_run_is_not_touched(state):
+    run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=2.0)
+    state.finish_run(run_id, 'done')
+    state._write('UPDATE runs SET pid = ? WHERE run_id = ?', (2 ** 22 + 1, run_id))
+
+    assert state.reconcile() == 0
+    assert state.run(run_id).status == 'done'
+
+
+def test_a_new_run_records_the_process_that_owns_it(state):
+    import os
+    run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=2.0)
+    assert state.query('SELECT pid FROM runs WHERE run_id = ?', (run_id,))[0]['pid'] == os.getpid()
