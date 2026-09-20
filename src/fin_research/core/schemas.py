@@ -212,6 +212,31 @@ class Disagreement(Strict):
     resolved: bool = False
 
 
+class Triage(Strict):
+    """A quick read on whether a company is worth a full deep dive.
+
+    The verdict is a closed set rather than a score, because a number invites averaging and this decision is
+    binary in practice: something either earns an hour of expensive reading or it does not. `pass` exists as
+    a middle answer so the model is not forced to reject a company it simply could not judge from what it was
+    given -- which is a different and more useful thing to know than a rejection.
+    """
+
+    ticker: str
+    verdict: Literal['escalate', 'pass', 'reject']
+    rationale: str = Field(max_length=800)
+    strengths: list[str] = Field(default_factory=list, max_length=5)
+    concerns: list[str] = Field(default_factory=list, max_length=5)
+    # What the deep dive should settle. This is the part that makes triage worth doing rather than skipping:
+    # it tells the expensive stage where to spend its attention.
+    open_questions: list[str] = Field(default_factory=list, max_length=5)
+    claims: list[Claim] = Field(default_factory=list, max_length=8)
+
+    @property
+    def is_escalated(self) -> bool:
+        """True if this company earns a deep dive."""
+        return self.verdict == 'escalate'
+
+
 class Report(Strict):
     """The finished research note."""
 
@@ -233,6 +258,7 @@ class Report(Strict):
 # pattern the neighbouring projects use for providers and checks.
 ARTIFACTS = {
     'FindingSet': FindingSet,
+    'Triage': Triage,
     'Thesis': Thesis,
     'Valuation': Valuation,
     'Report': Report,
@@ -240,6 +266,7 @@ ARTIFACTS = {
 
 ARTIFACT_DESCRIPTIONS = {
     'FindingSet': 'observations drawn from one source, each claim carrying its evidence',
+    'Triage': 'a quick verdict on whether a company deserves the expensive reading',
     'Thesis': 'one side of the argument, with the conditions that would break it',
     'Valuation': 'scenarios and the assumptions behind them',
     'Report': 'the finished research note',

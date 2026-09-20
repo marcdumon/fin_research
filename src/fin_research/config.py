@@ -46,6 +46,7 @@ _DEFAULT_PRICES = {
 # Assigned by verifiability, not difficulty: an agent whose output can be checked by code gets a cheap model.
 _DEFAULT_AGENT_TIERS = {
     # Cheap: every claim these make must quote the source, and every quote is checked by code.
+    'triage': 'cheap',
     'business': 'cheap',
     'risk_factors': 'cheap',
     'management_view': 'cheap',

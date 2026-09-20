@@ -14,6 +14,23 @@ tier against **$0.13** on the expensive one — prices and context windows verif
 ## What it does
 
 ```
+thousands of companies
+   |  screen: numbers only, no filings read, free
+tens
+   |  triage: one cheap call each, reads Item 1, most get rejected
+a handful
+   |  deep dive: nine agents, a debate, a valuation
+one research note
+```
+
+Each stage costs more per company than the one before and removes most of what reaches it, which is the only
+reason deep research across a broad universe is affordable. Screening a 2,200-company universe takes under a
+second and reads nothing; triage costs about a third of a cent per company; the deep dive costs real money
+and runs only on what survived both.
+
+Within a deep dive:
+
+```
 ticker -> filings -> sections -> evidence -> findings -> debate -> report
                   \-> XBRL facts -> reconciled statements -/
 ```
@@ -42,7 +59,9 @@ no convergence loop.
   interrupted while waiting can be resumed rather than stranded. Off by default: a gated run blocks until
   someone answers, which would silently stall an unattended job.
 - **Point in time.** Every document and fact carries its filing date, so a run dated 2023 reads only what was
-  public in 2023.
+  public in 2023. Screening enforces the same rule against the market data, which required discarding rows the
+  source claims were published before the period they cover, and reading restatements from their restated date
+  rather than the original filing's.
 
 ## Use
 
@@ -55,6 +74,14 @@ uv run python -m fin_research.ingest init
 uv run python -m fin_research.ingest ingest --ticker AAPL --years 5 --statements --news
 uv run python -m fin_research.ingest verify --ticker AAPL      # do its statements reconcile?
 uv run python -m fin_research.ingest score --tickers AAPL JPM  # regression gate, no model needed
+
+# Screen a universe. Free, reads no filings, and honest about any past date.
+uv run python -m fin_research.screen list
+uv run python -m fin_research.screen run --screen quality_value
+uv run python -m fin_research.screen run --screen quality_value --as-of 2020-09-01
+
+# Screen, then read the survivors and decide which earn a deep dive. Costs a few cents.
+uv run python -m fin_research.screen funnel --screen quality_value --limit 20 --budget 1.00
 
 # Research. This is the part that costs money.
 uv run python -m fin_research.agents roster
@@ -75,6 +102,7 @@ uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
 | `llm/` | the single `call_model` path, tier routing, structured-output parsing |
 | `agents/` | the nine agents and their prompts |
 | `report/` | markdown rendering with a numbered source appendix |
+| `screen/` | point-in-time factor screening over the attached market data, and the funnel |
 | `web/` | FastAPI reading the run ledger, streaming it as server-sent events |
 
 Prices and fundamentals are not duplicated here: the `investalyze` database is attached read-only.
@@ -82,7 +110,7 @@ Prices and fundamentals are not duplicated here: the `investalyze` database is a
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **182 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **194 tests**, none of which touch a network
 or a provider.
 
 **Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against

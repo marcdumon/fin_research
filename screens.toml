@@ -1,0 +1,61 @@
+# MD> Screens are the cheap first pass: they narrow thousands of companies to tens, using only figures that
+# were public on the screening date. Nothing here reads a filing or calls a model. What survives is what the
+# expensive agents then spend their time on.
+
+[screens.quality_value]
+description = 'Profitable businesses on a modest multiple, not carrying much debt'
+exclude_sectors = ['Financial Services', 'Real Estate']
+top = 30
+notes = '''
+Financials and REITs are excluded because the ratios here do not describe them: leverage is the business for
+a bank, and depreciation makes a REIT look unprofitable on reported earnings.
+'''
+require = [
+  { factor = 'market_cap', min = 300_000_000 },
+  { factor = 'earnings_yield', min = 0.06 },
+  # MD> Reported profit without cash behind it is the thing this screen is supposed to avoid, so free cash
+  # flow must be positive rather than merely ranked. Without this the top name was burning cash.
+  { factor = 'fcf_yield', min = 0.0 },
+  { factor = 'roe', min = 0.12 },
+  { factor = 'net_debt_to_equity', max = 1.5 },
+  { factor = 'accruals', max = 0.10 },
+]
+rank = [
+  { factor = 'fcf_yield', weight = 1.5 },
+  { factor = 'roe', weight = 1.0 },
+  { factor = 'accruals', weight = 0.5, lower_is_better = true },
+]
+
+[screens.compounders]
+description = 'Growing businesses with high margins that convert profit into cash'
+exclude_sectors = ['Financial Services', 'Real Estate', 'Energy']
+top = 30
+require = [
+  { factor = 'market_cap', min = 1_000_000_000 },
+  { factor = 'revenue_growth', min = 0.08 },
+  { factor = 'gross_margin', min = 0.35 },
+  { factor = 'fcf_yield', min = 0.01 },
+  { factor = 'net_debt_to_equity', max = 1.0 },
+]
+rank = [
+  { factor = 'revenue_growth', weight = 1.0 },
+  { factor = 'gross_margin', weight = 1.0 },
+  { factor = 'fcf_yield', weight = 1.0 },
+]
+
+[screens.out_of_favour]
+description = 'Sound businesses the market has marked down over the past year'
+exclude_sectors = ['Financial Services', 'Real Estate']
+top = 30
+notes = 'Momentum is a filter here rather than a ranking: the point is to look where price has fallen.'
+require = [
+  { factor = 'market_cap', min = 500_000_000 },
+  { factor = 'momentum', max = -0.15 },
+  { factor = 'fcf_yield', min = 0.04 },
+  { factor = 'net_debt_to_equity', max = 1.0 },
+  { factor = 'operating_margin', min = 0.05 },
+]
+rank = [
+  { factor = 'fcf_yield', weight = 1.5 },
+  { factor = 'operating_margin', weight = 1.0 },
+]

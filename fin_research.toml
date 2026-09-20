@@ -36,6 +36,7 @@ expensive = 'anthropic/claude-sonnet-5'
 [llm.agents]
 # MD> Tier follows how CHECKABLE an agent's output is, not how hard its task feels. An agent whose every
 # claim must quote the filing gets a cheap model, because code catches its mistakes.
+triage          = 'cheap'
 business        = 'cheap'
 risk_factors    = 'cheap'
 management_view = 'cheap'

@@ -31,6 +31,10 @@ ARCHIVE_URL = 'https://www.sec.gov/Archives/edgar/data/{cik}/{accession_nodash}'
 
 PERIODIC_FORMS = frozenset({'10-K', '10-K/A', '10-Q', '10-Q/A'})
 ANNUAL_FORMS = frozenset({'10-K', '10-K/A', '10-K405', '10-KSB'})
+
+# Amendments restate only the parts being corrected, so one often contains none of the narrative a reader
+# wants. Prefer an original when choosing a single filing to read.
+ORIGINAL_ANNUAL_FORMS = frozenset({'10-K', '10-K405', '10-KSB'})
 EVENT_FORMS = frozenset({'8-K', '8-K/A'})
 
 

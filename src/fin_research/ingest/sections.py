@@ -35,7 +35,15 @@ _DASHES = ''.join(map(chr, (0x2013, 0x2014)))
 _RSQUO = chr(0x2019)
 
 ITEM_HEADING = re.compile(
-    rf'(?im)^[ \t|]*(?P<marker>item\s+(?P<num>\d{{1,2}})\s*(?P<suffix>[A-C])?\s*[.:)\-{_DASHES}]?)'
+    # The suffix must not run into a word: without the lookahead, 'ITEMS 1 AND 2' reads the 'A' of 'AND'
+    # as item 1A, and the business description is filed under the wrong key.
+    rf'(?im)^[ \t|]*(?P<marker>items?\s+(?P<num>\d{{1,2}})\s*(?P<suffix>[A-C](?![A-Za-z]))?[ \t]*'
+    rf'[.:)\-{_DASHES}]?[ \t]*'
+    # A combined heading -- 'Items 1 and 2. Business and Properties' -- is one section covering both. Energy
+    # and utility filers use it as a matter of course, and a pattern requiring the singular 'Item' misses
+    # their entire business description while still finding every other item, which looks like a filer with
+    # no Item 1 rather than a broken pattern.
+    rf'(?:(?:and|&)[ \t]*\d{{1,2}}[ \t]*[A-C]?[ \t]*[.:)\-{_DASHES}]?[ \t]*)?)'
     r'[ \t]*(?P<title>[^\n]*)'
 )
 
@@ -142,6 +150,29 @@ def _normalise_key(num: str, suffix: str | None) -> str:
     return f'{num}{(suffix or "").upper()}'
 
 
+def _is_contents_row(raw_title: str) -> bool:
+    """True when what follows the marker looks like a contents entry rather than a heading.
+
+    Filers lay headings out in tables, so the test is how many cells follow the marker on its line:
+
+      'Item 1. Business'                          no cells -- a plain heading
+      'Item 1. |'                                 an empty cell; the title wrapped to the next line
+      'Item 1. | Business'                        one cell holding the title, and nothing else: a contents row
+      'ITEM 1. | BUSINESS | Otter Tail Corp...'   the title and then the section itself: a heading
+
+    A single title cell with nothing after it is the shape of a contents entry, because the page number sits
+    in the next row. Simpler rules were tried first and each destroyed a different filer's real headings:
+    excluding every empty title lost all of one pre-2020 filing's, and excluding any leading separator lost
+    the whole business description of a utility that writes its headings this way.
+    """
+    stripped = raw_title.lstrip()
+    if not stripped.startswith('|'):
+        return False
+
+    populated = [cell for cell in (cell.strip() for cell in stripped.split('|')) if cell]
+    return len(populated) == 1
+
+
 def find_candidates(cleaned: CleanedDocument) -> list[_Candidate]:
     """Line-anchored item markers that are not part of the table of contents.
 
@@ -159,14 +190,7 @@ def find_candidates(cleaned: CleanedDocument) -> list[_Candidate]:
             continue
 
         raw_title = match.group('title')
-        # A contents row puts the marker in one cell and its title in the next, so the marker's line reads
-        # 'Item 1. | Business'. A heading laid out in a table reads 'Item 1. |' with the title wrapping to the
-        # following line, and a plain heading reads 'Item 1. Business'. So it is specifically a cell separator
-        # *followed by title text on the same line* that identifies a contents row -- the separator alone does
-        # not, and neither does an empty title. Both of those weaker rules were tried and each destroyed a
-        # different filer's real headings.
-        stripped = raw_title.lstrip()
-        if stripped.startswith('|') and stripped.strip(' |').strip():
+        if _is_contents_row(raw_title):
             continue
 
         title = raw_title.strip(' |').strip()
