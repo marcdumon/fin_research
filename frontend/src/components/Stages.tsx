@@ -1,8 +1,23 @@
+import { useEffect, useState } from 'react'
 import { money, type Task } from '../api'
 
 function elapsed(startedAt: string): string {
   const seconds = Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 1000))
-  return seconds < 90 ? `${seconds}s` : `${Math.round(seconds / 60)}m`
+  if (seconds < 90) return `${seconds}s`
+  const minutes = Math.floor(seconds / 60)
+  return minutes < 60 ? `${minutes}m ${seconds % 60}s` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`
+}
+
+// Elapsed time is computed while rendering, and events only arrive when a task changes state. Without a
+// clock of its own the figure froze at whatever it was when the task started, so a step running for ten
+// minutes read "working 1s" the whole time.
+function useTick(active: boolean): void {
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    if (!active) return
+    const timer = setInterval(() => setTick((n) => n + 1), 1000)
+    return () => clearInterval(timer)
+  }, [active])
 }
 
 // Numbered because the route genuinely is a sequence: readers first, then the statements, then a debate that
@@ -26,6 +41,7 @@ const STATUS_STYLE: Record<string, string> = {
 
 export function Stages({ tasks }: { tasks: Task[] }) {
   const stages = [...new Set(tasks.map((t) => t.stage))].sort((a, b) => a - b)
+  useTick(tasks.some((task) => task.status === 'running'))
 
   if (!stages.length) {
     return <p className="text-muted text-[15px]">No agent has started yet.</p>
