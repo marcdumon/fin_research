@@ -55,7 +55,7 @@ function RunRail({ runs, selected, onSelect }: {
 export default function App() {
   const [runs, setRuns] = useState<Run[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const { snapshot, calls, approvals, live, justLanded } = useRunStream(selected)
+  const { snapshot, calls, approvals, live, justLanded, resolveApproval } = useRunStream(selected)
 
   useEffect(() => {
     listRuns().then((found) => {
@@ -103,10 +103,18 @@ export default function App() {
                   <div key={approval.approval_id} className="flex items-baseline justify-between gap-4 flex-wrap">
                     <p className="text-[14px]">{approval.prompt}</p>
                     <span className="flex gap-2">
-                      <button onClick={() => decide(approval.approval_id, true)}
-                              className="px-3 py-1 text-[13px] bg-ink text-surface">Approve</button>
-                      <button onClick={() => decide(approval.approval_id, false)}
-                              className="px-3 py-1 text-[13px] border border-rule">Stop here</button>
+                      <button
+                        onClick={() => {
+                          void decide(approval.approval_id, true)
+                          resolveApproval(approval.approval_id)
+                        }}
+                        className="px-3 py-1 text-[13px] bg-ink text-surface">Approve</button>
+                      <button
+                        onClick={() => {
+                          void decide(approval.approval_id, false)
+                          resolveApproval(approval.approval_id)
+                        }}
+                        className="px-3 py-1 text-[13px] border border-rule">Stop here</button>
                     </span>
                   </div>
                 ))}

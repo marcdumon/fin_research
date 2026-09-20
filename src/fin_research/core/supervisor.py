@@ -23,10 +23,12 @@ import duckdb
 
 from fin_research.agents import analysts, debate, synthesis  # noqa: F401  (registers the roster)
 from fin_research.agents.base import AGENTS, AgentResult, RunContext
+from fin_research.core.approvals import Rejected, gate
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 from fin_research.core.state import BudgetExceeded, State
 from fin_research.ingest import store as store_module
 from fin_research.ingest.store import MARKET_ALIAS
+from fin_research.llm.router import resolve
 
 log = logging.getLogger(__name__)
 
@@ -137,11 +139,30 @@ class DeepDive:
         return sum(1 for v in checkable if v.grounded) / len(checkable)
 
 
+def _gate_prompt(ctx: RunContext, name: str) -> str:
+    """What the dashboard shows when asking whether to run an agent."""
+    choice = resolve(ctx.cfg, name)
+    summary = ctx.state.run(ctx.run_id)
+    spent = f'${summary.spend_usd:.4f} of ${summary.budget_usd:.2f}' if summary else 'unknown'
+    return (f'Run {name} for {ctx.ticker} on {choice.model} ({choice.tier})? '
+            f'Spent so far: {spent}.')
+
+
 async def _run_agent(name: str, ctx: RunContext, stage: int, semaphore: asyncio.Semaphore,
                      **inputs: object) -> AgentResult | None:
     """Run one agent as a tracked task, returning None if it failed for a reason worth continuing past."""
     async with semaphore:
         task_id = ctx.state.start_task(ctx.run_id, name, stage)
+
+        if ctx.cfg.llm.needs_approval(name):
+            try:
+                await gate(ctx.state, ctx.run_id, subject='agent', prompt=_gate_prompt(ctx, name),
+                           task_id=task_id, timeout=ctx.cfg.llm.gate_timeout_seconds)
+            except Rejected as refusal:
+                log.info(f'{name} not run: {refusal}')
+                ctx.state.finish_task(task_id, 'skipped', str(refusal))
+                return None
+
         try:
             result = await AGENTS[name].run(ctx, task_id=task_id, **inputs)
         except BudgetExceeded:

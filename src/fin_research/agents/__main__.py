@@ -9,6 +9,7 @@ none of those things.
 import argparse
 import asyncio
 import logging
+from dataclasses import replace
 from datetime import date
 from pathlib import Path
 
@@ -30,6 +31,13 @@ async def _run(args: argparse.Namespace) -> int:
     """Take one company through the full route and write the note."""
     cfg = read(args.config)
     as_of = date.fromisoformat(args.as_of) if args.as_of else date.today()
+
+    if args.gate:
+        # Gating means the run waits for a click in the dashboard, so it is opt-in: an unattended job that
+        # blocked on a human nobody had told about would just stall.
+        cfg = replace(cfg, llm=replace(cfg.llm, gate_tiers=tuple(args.gate)))
+        print(f'Gated on {", ".join(args.gate)}. Approve at http://127.0.0.1:8000 '
+              f'within {cfg.llm.gate_timeout_seconds:.0f}s per step.')
 
     with State(cfg.state_path) as state:
         prepared = prepare(cfg, state, args.ticker, as_of, args.budget)
@@ -125,6 +133,9 @@ def main() -> int:
             sub.add_argument('--budget', type=float, default=2.0, help='hard ceiling in dollars')
             sub.add_argument('--as-of', help='only read filings published on or before this date')
             sub.add_argument('--out', type=Path)
+            sub.add_argument('--gate', nargs='*', choices=['cheap', 'mid', 'expensive'], default=None,
+                             metavar='TIER',
+                             help='ask before running agents on these tiers; needs the dashboard open')
         if name == 'cost':
             sub.add_argument('--limit', type=int, default=10)
 

@@ -62,5 +62,10 @@ export function useRunStream(runId: string | null) {
     return () => source.close()
   }, [runId])
 
-  return { snapshot, calls, approvals, live, justLanded: landed.current }
+  // Drop a request once it is answered. The stream only reports requests appearing, so without this an
+  // approved step would stay on screen as though it were still waiting.
+  const resolveApproval = (approvalId: string) =>
+    setApprovals((previous) => previous.filter((a) => a.approval_id !== approvalId))
+
+  return { snapshot, calls, approvals, live, justLanded: landed.current, resolveApproval }
 }

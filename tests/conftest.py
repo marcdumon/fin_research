@@ -46,3 +46,32 @@ def aapl_facts() -> list:
 def unh_facts() -> list:
     """Normalised facts for a filer carrying mezzanine equity and discontinued operations."""
     return parse_facts(company_facts('unh'), cik=731766)
+
+
+@pytest.fixture
+def filing_sources():
+    """Real sections of a real filing, shaped as the supervisor expects them."""
+    from fin_research.core.supervisor import Sources
+    from fin_research.ingest.sections import split
+
+    document = clean(filing_html('aapl_tech'))
+    result = split(document)
+    items = {i: result.by_item(i).text(document.text) for i in ('1', '1A', '7')}
+    return Sources(sections={k: (f'doc-{k}', v) for k, v in items.items()},
+                   statements=('doc-fin', items['7'][:5_000]))
+
+
+@pytest.fixture
+def replies(filing_sources):
+    """Canned agent replies that quote the fixture filing verbatim."""
+    from test_end_to_end import _finding_set, _quote, _report, _thesis, _valuation
+
+    text = {key: value for key, (_, value) in filing_sources.sections.items()}
+    return {
+        'business': _finding_set('doc-1', [_quote(text['1'], 500)]),
+        'risk_factors': _finding_set('doc-1A', [_quote(text['1A'], 800)]),
+        'management_view': _finding_set('doc-7', [_quote(text['7'], 1200)]),
+        'financials': _finding_set('doc-fin', [_quote(text['7'], 2500)]),
+        'bull': _thesis('bull'), 'bear': _thesis('bear'), 'valuation': _valuation(),
+        'synthesis': _report('doc-1', _quote(text['1'], 500)),
+    }

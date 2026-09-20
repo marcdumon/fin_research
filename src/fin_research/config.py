@@ -85,9 +85,16 @@ class LLMConfig:
     base_url: str = _DEFAULT_BASE_URL
     max_concurrency: int = _DEFAULT_CONCURRENCY
     default_budget_usd: float = _DEFAULT_BUDGET_USD
+    # Empty by default: a gated run waits for a human, and an unattended job would otherwise stall silently.
+    gate_tiers: tuple[str, ...] = ()
+    gate_timeout_seconds: float = 900.0
     tiers: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_TIERS))
     agents: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_AGENT_TIERS))
     prices: dict[str, dict[str, float]] = field(default_factory=lambda: dict(_DEFAULT_PRICES))
+
+    def needs_approval(self, agent: str) -> bool:
+        """True if a human must approve this agent before it runs."""
+        return self.tier_for(agent) in self.gate_tiers
 
     def tier_for(self, agent: str) -> str:
         """Tier name assigned to `agent`, defaulting to 'cheap' for anything unlisted."""
@@ -160,6 +167,8 @@ def read(path: Path | None = None) -> Config:
             base_url=llm_raw.get('base_url', _DEFAULT_BASE_URL),
             max_concurrency=llm_raw.get('max_concurrency', _DEFAULT_CONCURRENCY),
             default_budget_usd=llm_raw.get('default_budget_usd', _DEFAULT_BUDGET_USD),
+            gate_tiers=tuple(llm_raw.get('gate_tiers', ())),
+            gate_timeout_seconds=llm_raw.get('gate_timeout_seconds', 900.0),
             tiers={**_DEFAULT_TIERS, **llm_raw.get('tiers', {})},
             agents={**_DEFAULT_AGENT_TIERS, **llm_raw.get('agents', {})},
             prices={**_DEFAULT_PRICES, **llm_raw.get('prices', {})},

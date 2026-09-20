@@ -37,6 +37,10 @@ no convergence loop.
   earn.
 - **Spend is refused, not just reported.** The budget is checked before a request is sent. Every call is
   recorded, including failures.
+- **A human can stand in front of the expensive steps.** `--gate expensive` makes the run stop and wait for a
+  decision in the dashboard before each costly call. The pending request is a row in the database, so a run
+  interrupted while waiting can be resumed rather than stranded. Off by default: a gated run blocks until
+  someone answers, which would silently stall an unattended job.
 - **Point in time.** Every document and fact carries its filing date, so a run dated 2023 reads only what was
   public in 2023.
 
@@ -55,7 +59,11 @@ uv run python -m fin_research.ingest score --tickers AAPL JPM  # regression gate
 # Research. This is the part that costs money.
 uv run python -m fin_research.agents roster
 uv run python -m fin_research.agents run --ticker AAPL --budget 2.00
+uv run python -m fin_research.agents run --ticker AAPL --budget 2.00 --gate expensive
 uv run python -m fin_research.agents cost
+
+# Watch it work, and answer the gates.
+uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
 ```
 
 ## Layout
@@ -67,13 +75,14 @@ uv run python -m fin_research.agents cost
 | `llm/` | the single `call_model` path, tier routing, structured-output parsing |
 | `agents/` | the nine agents and their prompts |
 | `report/` | markdown rendering with a numbered source appendix |
+| `web/` | FastAPI reading the run ledger, streaming it as server-sent events |
 
 Prices and fundamentals are not duplicated here: the `investalyze` database is attached read-only.
 
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **174 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **182 tests**, none of which touch a network
 or a provider.
 
 **Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against

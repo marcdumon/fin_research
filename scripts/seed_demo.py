@@ -8,29 +8,27 @@ Safe to re-run. Delete `data/state.sqlite` to start clean.
 """
 
 import asyncio
-import json
 import sys
 from datetime import date, timedelta
 from pathlib import Path
 
-import httpx
 import respx
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tests'))
 
-from conftest import filing_html  # noqa: E402
-from test_end_to_end import _finding_set, _quote, _report, _router, _thesis, _valuation  # noqa: E402
+from conftest import filing_html
+from test_end_to_end import _finding_set, _quote, _report, _router, _thesis, _valuation
 
-from fin_research import paths  # noqa: E402
-from fin_research.agents.base import RunContext  # noqa: E402
-from fin_research.config import read  # noqa: E402
-from fin_research.core.state import State  # noqa: E402
-from fin_research.core.supervisor import Sources, run_deep_dive  # noqa: E402
-from fin_research.ingest.sections import split  # noqa: E402
-from fin_research.ingest.text import clean  # noqa: E402
-from fin_research.llm.client import ModelClient  # noqa: E402
-from fin_research.logging import configure_logging  # noqa: E402
-from fin_research.report.render import render  # noqa: E402
+from fin_research import paths
+from fin_research.agents.base import RunContext
+from fin_research.config import read
+from fin_research.core.state import State
+from fin_research.core.supervisor import Sources, run_deep_dive
+from fin_research.ingest.sections import split
+from fin_research.ingest.text import clean
+from fin_research.llm.client import ModelClient
+from fin_research.logging import configure_logging
+from fin_research.report.render import render
 
 COMPLETIONS = 'https://openrouter.ai/api/v1/chat/completions'
 
