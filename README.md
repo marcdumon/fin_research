@@ -132,8 +132,10 @@ discovery step, not a confirmation one.
 
 Known limits, all flagged in code rather than hidden:
 
-- **Banks satisfy Item 7 and Item 8 with pointers.** One large bank's MD&A "appears on pages 46-160" under no
-  item heading at all. Statements are covered via the rendered pages; its MD&A is not.
+- **Banks and insurers are out of scope**, by decision rather than oversight. The ratios this system screens
+  on do not describe them -- leverage is the business for a bank -- and they satisfy Item 7 with a pointer to
+  a page range rather than content under the heading. The shipped screens exclude Financial Services, and a
+  bank that is researched directly will produce a note without a management discussion, flagged as such.
 - **10-Q is refused.** Quarterly filings number items separately per part, so ordering cannot disambiguate
   them; the splitter declines rather than guessing.
 - **Reorganised tickers raise.** One major oil company's ticker currently resolves to a registrant with no
