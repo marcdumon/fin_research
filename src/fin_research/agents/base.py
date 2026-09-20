@@ -22,7 +22,7 @@ from pydantic import BaseModel
 from fin_research.config import Config
 from fin_research.core.schemas import Claim, Finding, FindingSet
 from fin_research.core.state import State
-from fin_research.core.verification import SourceText, VerificationReport, surviving_findings, verify_claims
+from fin_research.core.verification import FactIndex, SourceText, VerificationReport, surviving_findings, verify_claims
 from fin_research.llm.client import ModelClient, ModelRequest
 from fin_research.llm.router import estimate_tokens, resolve
 
@@ -48,6 +48,9 @@ class RunContext:
     ticker: str
     as_of: date
     sources: dict[str, SourceText] = field(default_factory=dict)
+    # What the company actually reported. Without it a figure is only checked against the sentence it was
+    # quoted from, which a model can satisfy while stating the wrong number.
+    facts: FactIndex | None = None
 
     def add_source(self, document_id: str, text: str) -> None:
         """Register a document that agents may cite."""
@@ -120,18 +123,18 @@ class Analyst:
         raise NotImplementedError
 
     def _check(self, artifact: BaseModel, ctx: RunContext) -> tuple[BaseModel, VerificationReport]:
-        """Drop any claim whose citations do not resolve, before the artifact goes anywhere.
+        """Drop any claim whose citations do not resolve, or whose figure contradicts the statements.
 
         Done here rather than at report time so an expensive model never reads, and never builds on, a claim
         that failed. A finding left with no surviving claims is discarded entirely.
         """
         if isinstance(artifact, FindingSet):
-            kept, report = surviving_findings(list(artifact.findings), ctx.sources)
+            kept, report = surviving_findings(list(artifact.findings), ctx.sources, ctx.facts)
             return artifact.model_copy(update={'findings': kept}), report
 
         claims = getattr(artifact, 'claims', None)
         if isinstance(claims, list) and all(isinstance(c, Claim) for c in claims):
-            report = verify_claims(claims, ctx.sources)
+            report = verify_claims(claims, ctx.sources, ctx.facts)
             return artifact.model_copy(update={'claims': [v.claim for v in report.grounded]}), report
 
         return artifact, VerificationReport(verdicts=())

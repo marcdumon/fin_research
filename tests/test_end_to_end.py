@@ -268,3 +268,51 @@ async def test_a_run_dated_before_a_filing_cannot_read_it(tmp_path, filing, repl
         prepared = prepare(cfg, state, 'AAPL', date(2019, 1, 1), budget_usd=5.0)
 
     assert prepared.sources.is_empty, 'a run read a filing published seven years after its as-of date'
+
+
+@respx.mock
+async def test_a_wrong_figure_never_reaches_the_report(tmp_path, filing, replies):
+    """A model can quote a real sentence and state the wrong number. Only the fact check catches that.
+
+    The reply here cites a genuine quotation from the filing and attaches a revenue figure the company never
+    reported. Span verification passes it, because the sentence is real; the claim must still be dropped.
+    """
+    from dataclasses import dataclass
+
+    from fin_research.core.verification import FactIndex
+
+    @dataclass
+    class Reported:
+        metric: str
+        value: float
+
+    honest = _quote(filing['1'], 500)
+    wrong = json.dumps({'findings': [{'headline': 'Revenue', 'detail': 'From the filing.', 'tags': [],
+                                      'claims': [{
+                                          'claim_id': '', 'claim_type': 'numeric',
+                                          'text': 'Revenue reached $900 billion', 'subject': None,
+                                          'polarity': 'bull', 'importance': 5,
+                                          'numeric_value': 900.0, 'numeric_unit': 'USD billions',
+                                          'metric': 'Revenue', 'attacks': [],
+                                          'evidence': [{'kind': 'span', 'document_id': 'doc-1',
+                                                        'section_id': None, 'quoted_text': honest,
+                                                        'fact_id': None}]}]}],
+                        'unresolved': []})
+
+    respx.post(COMPLETIONS).mock(side_effect=_router({**replies, 'business': wrong}))
+    cfg = Config(data_root=tmp_path)
+    sources = Sources(sections={'1': ('doc-1', filing['1']), '1A': ('doc-1A', filing['1A'])})
+    facts = FactIndex.from_facts([Reported('Revenue', 416_161_000_000)])
+
+    with State(tmp_path / 'state.sqlite') as state:
+        run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=5.0)
+        async with ModelClient(cfg=cfg, state=state, run_id=run_id, api_key='k') as client:
+            ctx = RunContext(cfg=cfg, state=state, client=client, run_id=run_id,
+                             ticker='AAPL', as_of=date(2026, 9, 20), facts=facts)
+            outcome = await run_deep_dive(ctx, sources, price=None)
+
+    stated = [claim.text for finding in outcome.findings for claim in finding.claims]
+    assert 'Revenue reached $900 billion' not in stated, 'a figure the company never reported survived'
+
+    outcomes = {k: v for result in outcome.results for k, v in result.verification.numeric_outcomes().items()}
+    assert outcomes.get('contradicted', 0) >= 1, 'the contradiction should be recorded, not merely dropped'

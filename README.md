@@ -53,10 +53,12 @@ no convergence loop.
 - **A fabricated citation cannot reach the report.** Agents quote; they never supply offsets, because models
   cannot count characters. The verifier locates each quote in the canonical text and assigns the offsets
   itself. A quote that is not found is discarded along with the claim it supported.
-- **Numbers are checked against the filer's own arithmetic.** Assets must equal liabilities plus equity; the
-  cash flow sections plus currency effects must equal the change in cash. Checks are three-valued — pass,
-  fail, or skipped naming what was missing — because a check that silently skips reports a success it did not
-  earn.
+- **Numbers are checked against the filer's own arithmetic, twice over.** Every stated figure is compared
+  against what the company actually reported, so a model that quotes a real sentence and states the wrong
+  revenue has the claim dropped — span checking alone passes that, which is why it is not enough. Separately,
+  the statements must reconcile: assets equal liabilities plus equity, and the cash flow sections plus
+  currency effects equal the change in cash. Both checks are three-valued — pass, fail, or skipped naming
+  what was missing — because a check that silently skips reports a success it did not earn.
 - **Spend is refused, not just reported.** The budget is checked before a request is sent. Every call is
   recorded, including failures.
 - **A human can stand in front of the expensive steps.** `--gate expensive` makes the run stop and wait for a
@@ -121,7 +123,7 @@ Prices and fundamentals are not duplicated here: the `investalyze` database is a
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **220 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **229 tests**, none of which touch a network
 or a provider.
 
 **Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against

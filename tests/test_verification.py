@@ -6,12 +6,16 @@ citation is an offset and a drift there corrupts the record silently.
 """
 
 
+from dataclasses import dataclass
+
 import pytest
 from conftest import filing_html
 
 from fin_research.core.schemas import Claim, ClaimType, EvidenceKind, EvidenceRequest, Finding, MatchKind
 from fin_research.core.verification import (
     MIN_QUOTE_CHARS,
+    FactIndex,
+    NumericVerdict,
     SourceText,
     fold,
     parse_scale,
@@ -209,3 +213,103 @@ def test_match_kind_counts_expose_drift_toward_weaker_matching():
     ]
     counts = verify_claims(claims, sources).match_kinds()
     assert counts == {'exact': 1, 'case': 1}
+
+
+# --- figures against the filer's own statements -------------------------------
+@dataclass
+class _Reported:
+    """Stands in for a normalised fact."""
+
+    metric: str
+    value: float
+
+
+@pytest.fixture
+def reported() -> FactIndex:
+    """What a company actually filed, across two years."""
+    return FactIndex.from_facts([
+        _Reported('Revenue', 416_161_000_000), _Reported('Revenue', 391_035_000_000),
+        _Reported('CapEx', -8_165_000_000), _Reported('Total Assets', 359_241_000_000),
+    ])
+
+
+@pytest.fixture
+def quoted() -> tuple[dict, EvidenceRequest]:
+    """A source and a quote from it that genuinely exists."""
+    text = 'Total net sales increased 6% to $416.2 billion during 2025, driven by iPhone and Services.'
+    return {'d1': SourceText(text)}, EvidenceRequest(document_id='d1', quoted_text='Total net sales increased 6%')
+
+
+def _numeric(value: float, metric: str | None, evidence, unit: str = 'USD billions') -> Claim:
+    return Claim(claim_type=ClaimType.NUMERIC, text='a figure', numeric_value=value,
+                 numeric_unit=unit, metric=metric, evidence=[evidence])
+
+
+def test_a_real_quote_with_a_wrong_number_is_rejected(reported, quoted):
+    """The case this check exists for: span verification alone passes it, because the sentence is real."""
+    sources, evidence = quoted
+    verdict = verify_claim(_numeric(500.0, 'Revenue', evidence), sources, reported)
+
+    assert not verdict.grounded
+    assert verdict.numeric is NumericVerdict.CONTRADICTED
+    assert '416,161,000,000' in verdict.reason
+
+    without_facts = verify_claim(_numeric(500.0, 'Revenue', evidence), sources)
+    assert without_facts.grounded, 'span checking alone cannot catch this, which is the point'
+
+
+def test_a_correct_figure_is_confirmed(reported, quoted):
+    sources, evidence = quoted
+    verdict = verify_claim(_numeric(416.2, 'Revenue', evidence), sources, reported)
+    assert verdict.grounded and verdict.numeric is NumericVerdict.CONFIRMED
+
+
+def test_a_prior_year_figure_is_accepted(reported, quoted):
+    """A model quoting last year's revenue is being accurate, not wrong."""
+    sources, evidence = quoted
+    assert verify_claim(_numeric(391.0, 'Revenue', evidence), sources, reported).grounded
+
+
+def test_an_outflow_quoted_without_its_sign_still_matches(reported, quoted):
+    """Statements store outflows negative; prose says 'capital expenditure of 8.2 billion'."""
+    sources, evidence = quoted
+    verdict = verify_claim(_numeric(8.165, 'CapEx', evidence), sources, reported)
+    assert verdict.grounded and verdict.numeric is NumericVerdict.CONFIRMED
+
+
+def test_a_metric_the_company_never_reported_is_not_checked(reported, quoted):
+    """Not every number is a line in the accounts. Rejecting those would discard correct claims."""
+    sources, evidence = quoted
+    verdict = verify_claim(_numeric(12.0, 'Retail stores', evidence, unit='count'), sources, reported)
+    assert verdict.grounded and verdict.numeric is NumericVerdict.UNCHECKED
+
+
+def test_a_figure_with_no_metric_named_is_not_checked(reported, quoted):
+    sources, evidence = quoted
+    verdict = verify_claim(_numeric(12.0, None, evidence), sources, reported)
+    assert verdict.numeric is NumericVerdict.UNCHECKED
+
+
+def test_a_wrong_number_with_a_fabricated_quote_fails_on_the_quote_first(reported, quoted):
+    """Citation failure is reported ahead of arithmetic, because it is the more fundamental one."""
+    sources, _ = quoted
+    invented = EvidenceRequest(document_id='d1', quoted_text='Revenue reached five hundred billion dollars')
+    verdict = verify_claim(_numeric(500.0, 'Revenue', invented), sources, reported)
+
+    assert not verdict.grounded
+    assert 'not found in the source' in verdict.reason
+
+
+def test_the_report_counts_figures_separately_from_citations(reported, quoted):
+    """Whether a source says what was claimed and whether the number is right are different questions."""
+    sources, evidence = quoted
+    report = verify_claims([_numeric(416.2, 'Revenue', evidence), _numeric(500.0, 'Revenue', evidence)],
+                           sources, reported)
+
+    assert report.numeric_outcomes() == {'confirmed': 1, 'contradicted': 1}
+    assert report.match_kinds() == {'exact': 2}, 'both quotes were real; only the numbers differed'
+
+
+def test_an_empty_index_checks_nothing(quoted):
+    _, evidence = quoted
+    assert FactIndex.from_facts([]).check(_numeric(416.2, 'Revenue', evidence))[0] is NumericVerdict.UNCHECKED

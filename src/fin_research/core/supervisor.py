@@ -27,6 +27,7 @@ from fin_research.agents.debate import thesis_digest
 from fin_research.core.approvals import Rejected, gate
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 from fin_research.core.state import BudgetExceeded, State
+from fin_research.core.verification import FactIndex
 from fin_research.ingest import store as store_module
 from fin_research.ingest.store import MARKET_ALIAS
 from fin_research.llm.router import resolve
@@ -96,6 +97,22 @@ def load_sources(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> So
         sources.events = (press[0], press[1])
 
     return sources
+
+
+def load_facts(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> FactIndex:
+    """Every metric the company had reported by `as_of`, indexed for checking agents' figures.
+
+    Filtered on the filing date like everything else: a run dated 2023 must not verify a claim against a
+    figure published in 2025, which would quietly turn a look-ahead error into a passing check.
+    """
+    rows = con.execute("""
+        SELECT metric, value FROM facts
+        WHERE ticker = ? AND filed <= ? AND metric IS NOT NULL AND period_type = 'A'
+    """, [ticker, as_of]).fetchall()
+
+    from dataclasses import make_dataclass
+    row = make_dataclass('FactRow', ['metric', 'value'])
+    return FactIndex.from_facts([row(metric, value) for metric, value in rows])
 
 
 def latest_price(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> float | None:
@@ -268,6 +285,7 @@ class Preparation:
     run_id: str
     sources: Sources
     price: float | None
+    facts: FactIndex | None = None
 
 
 def prepare(cfg, state: State, ticker: str, as_of: date, budget_usd: float) -> Preparation:
@@ -279,9 +297,10 @@ def prepare(cfg, state: State, ticker: str, as_of: date, budget_usd: float) -> P
     """
     with store_module.connect(cfg, read_only=True) as con:
         sources = load_sources(con, ticker, as_of)
+        facts = load_facts(con, ticker, as_of)
         price = None
         if cfg.investalyze_db and store_module.attach_market_data(con, cfg.investalyze_db):
             price = latest_price(con, ticker, as_of)
 
     run_id = state.start_run(ticker, None, as_of, budget_usd, {'agents': cfg.llm.agents})
-    return Preparation(run_id=run_id, sources=sources, price=price)
+    return Preparation(run_id=run_id, sources=sources, price=price, facts=facts)

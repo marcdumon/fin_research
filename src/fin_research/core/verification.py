@@ -18,7 +18,9 @@ during folding, so `text[start:end]` returns exactly what was matched.
 import logging
 import re
 import unicodedata
-from dataclasses import dataclass
+from collections.abc import Iterable
+from dataclasses import dataclass, field
+from enum import StrEnum
 
 from fin_research.core.schemas import Claim, Evidence, EvidenceKind, EvidenceRequest, Finding, MatchKind
 
@@ -163,6 +165,65 @@ def verify_numeric(claim: Claim, reported: float, tolerance: float = NUMERIC_TOL
     return abs(stated - reported) / abs(reported) <= tolerance
 
 
+class NumericVerdict(StrEnum):
+    """What comparing a stated figure against the filer's own statements established.
+
+    Three values for the same reason the accounting identities have three: a check that could not run has not
+    passed, and collapsing that into success is how a system ends up reporting confidence it never earned.
+    """
+
+    CONFIRMED = 'confirmed'
+    CONTRADICTED = 'contradicted'
+    UNCHECKED = 'unchecked'
+
+
+@dataclass(frozen=True)
+class FactIndex:
+    """The figures a company actually reported, arranged for lookup by metric.
+
+    Built once per run from the normalised facts. Holds every period rather than only the latest, because a
+    claim often refers to a prior year -- rejecting a correct figure for the year before last would be worse
+    than not checking at all.
+    """
+
+    by_metric: dict[str, tuple[float, ...]] = field(default_factory=dict)
+
+    @classmethod
+    def from_facts(cls, facts: Iterable) -> 'FactIndex':
+        """Index normalised facts by their canonical metric."""
+        grouped: dict[str, list[float]] = {}
+        for fact in facts:
+            metric = getattr(fact, 'metric', None)
+            if metric:
+                grouped.setdefault(metric, []).append(float(fact.value))
+        return cls(by_metric={metric: tuple(values) for metric, values in grouped.items()})
+
+    def knows(self, metric: str) -> bool:
+        """True if the company reported this metric at all."""
+        return metric in self.by_metric
+
+    def check(self, claim: Claim) -> tuple[NumericVerdict, float | None]:
+        """Compare a claim's figure against every value the company reported for that metric.
+
+        Any reported period matching is enough. A model quoting last year's revenue is being accurate, and a
+        check that insisted on the latest period would reject it for the wrong reason.
+
+        Sign is compared on magnitude: the statements store outflows negative, while prose says 'capital
+        expenditure of 8.2 billion' without a minus, and treating that as a contradiction would reject
+        correct claims about every cash outflow a company makes.
+        """
+        if not claim.is_checkable_number:
+            return NumericVerdict.UNCHECKED, None
+        reported = self.by_metric.get(claim.metric or '')
+        if not reported:
+            return NumericVerdict.UNCHECKED, None
+
+        for value in reported:
+            if verify_numeric(claim, value) or verify_numeric(claim, abs(value)):
+                return NumericVerdict.CONFIRMED, value
+        return NumericVerdict.CONTRADICTED, reported[0]
+
+
 def _evidence_id(request: EvidenceRequest, match: Match | None) -> str:
     """Content-addressed id, so the same citation from two agents collapses to one row."""
     from fin_research.ingest.store import digest
@@ -206,6 +267,7 @@ class ClaimVerdict:
     evidence: tuple[Evidence, ...]
     grounded: bool
     reason: str
+    numeric: 'NumericVerdict' = None  # type: ignore[assignment]
 
     @property
     def weakest_match(self) -> MatchKind | None:
@@ -214,12 +276,17 @@ class ClaimVerdict:
         return max(spans, key=lambda k: [m.value for m in MatchKind].index(k.value)) if spans else None
 
 
-def verify_claim(claim: Claim, sources: dict[str, SourceText]) -> ClaimVerdict:
-    """Check one claim's citations.
+def verify_claim(claim: Claim, sources: dict[str, SourceText],
+                 facts: FactIndex | None = None) -> ClaimVerdict:
+    """Check one claim's citations, and its arithmetic where there is arithmetic to check.
 
     Judgement claims are exempt by design -- 'this is a good business' cannot be grounded in a quote, and
     pretending otherwise would make the groundedness figure meaningless. Everything checkable is checked, and
     a checkable claim offering no evidence fails outright rather than passing for lack of contradiction.
+
+    A figure is checked twice over: the sentence it was quoted from must exist, and the number itself must
+    match what the company reported. Those are different failures. A model can quote a real sentence about
+    revenue and state the wrong revenue, and span checking alone would pass it.
     """
     evidence = tuple(verify_evidence(request, sources) for request in claim.evidence)
 
@@ -234,7 +301,16 @@ def verify_claim(claim: Claim, sources: dict[str, SourceText]) -> ClaimVerdict:
         return ClaimVerdict(claim=claim, evidence=evidence, grounded=False,
                             reason=f'{len(unmatched)} of {len(evidence)} citations not found in the source')
 
-    return ClaimVerdict(claim=claim, evidence=evidence, grounded=True, reason='every citation resolved')
+    numeric, reported = (facts.check(claim) if facts else (NumericVerdict.UNCHECKED, None))
+    if numeric is NumericVerdict.CONTRADICTED:
+        stated = (claim.numeric_value or 0) * parse_scale(claim.numeric_unit)
+        return ClaimVerdict(
+            claim=claim, evidence=evidence, grounded=False, numeric=numeric,
+            reason=f'states {claim.metric} of {stated:,.0f} but the filer reported {reported:,.0f}')
+
+    reason = ('every citation resolved, and the figure matches what was reported'
+              if numeric is NumericVerdict.CONFIRMED else 'every citation resolved')
+    return ClaimVerdict(claim=claim, evidence=evidence, grounded=True, numeric=numeric, reason=reason)
 
 
 @dataclass(frozen=True)
@@ -271,6 +347,18 @@ class VerificationReport:
             return None
         return sum(1 for v in checkable if v.grounded) / len(checkable)
 
+    def numeric_outcomes(self) -> dict[str, int]:
+        """Count of figures by what checking them established.
+
+        Reported separately from citation matching because they answer different questions: whether the
+        source says what was claimed, and whether the number is right.
+        """
+        counts: dict[str, int] = {}
+        for verdict in self.verdicts:
+            if verdict.numeric and verdict.numeric is not NumericVerdict.UNCHECKED:
+                counts[verdict.numeric.value] = counts.get(verdict.numeric.value, 0) + 1
+        return counts
+
     def match_kinds(self) -> dict[str, int]:
         """Count of evidence by match rung, so drift toward weaker matching is visible."""
         counts: dict[str, int] = {}
@@ -281,15 +369,17 @@ class VerificationReport:
         return counts
 
 
-def verify_claims(claims: list[Claim], sources: dict[str, SourceText]) -> VerificationReport:
+def verify_claims(claims: list[Claim], sources: dict[str, SourceText],
+                  facts: FactIndex | None = None) -> VerificationReport:
     """Check every claim in a batch."""
-    report = VerificationReport(verdicts=tuple(verify_claim(claim, sources) for claim in claims))
+    report = VerificationReport(verdicts=tuple(verify_claim(claim, sources, facts) for claim in claims))
     for verdict in report.rejected:
         log.warning(f'dropping claim: {verdict.reason} -- {verdict.claim.text[:90]}')
     return report
 
 
-def surviving_findings(findings: list[Finding], sources: dict[str, SourceText]) -> tuple[list[Finding], VerificationReport]:
+def surviving_findings(findings: list[Finding], sources: dict[str, SourceText],
+                       facts: FactIndex | None = None) -> tuple[list[Finding], VerificationReport]:
     """Strip ungrounded claims out of findings before anything downstream reads them.
 
     Dropping happens here rather than at report time so an expensive model never sees, and never builds on,
@@ -299,7 +389,7 @@ def surviving_findings(findings: list[Finding], sources: dict[str, SourceText]) 
     kept: list[Finding] = []
 
     for finding in findings:
-        report = verify_claims(finding.claims, sources)
+        report = verify_claims(finding.claims, sources, facts)
         verdicts.extend(report.verdicts)
         survivors = [v.claim for v in report.grounded]
         if survivors:

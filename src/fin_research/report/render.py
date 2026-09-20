@@ -99,7 +99,8 @@ def _valuation(report: Report) -> str:
 
 
 def render(report: Report, sources: dict[str, SourceText], groundedness: float | None = None,
-           cost_usd: float | None = None, match_kinds: dict[str, int] | None = None) -> str:
+           cost_usd: float | None = None, match_kinds: dict[str, int] | None = None,
+           numeric: dict[str, int] | None = None) -> str:
     """Render the whole report.
 
     Order follows how a note is actually read: the conclusion first, then the numbers, then both sides of the
@@ -164,6 +165,11 @@ def render(report: Report, sources: dict[str, SourceText], groundedness: float |
     if match_kinds:
         ordered = [k.value for k in MatchKind if k.value in match_kinds]
         footer.append('Match quality: ' + ', '.join(f'{k} {match_kinds[k]}' for k in ordered) + '.')
+    if numeric:
+        confirmed = numeric.get('confirmed', 0)
+        contradicted = numeric.get('contradicted', 0)
+        footer.append(f'Figures checked against the filed statements: {confirmed} agreed'
+                      + (f', {contradicted} did not and were dropped' if contradicted else '') + '.')
     if cost_usd is not None:
         footer.append(f'Cost: **${cost_usd:.4f}**.')
     footer.append('')

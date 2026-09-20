@@ -118,8 +118,17 @@ class Claim(Strict):
     importance: int = Field(3, ge=1, le=5)
     numeric_value: float | None = None
     numeric_unit: str | None = None
+    # Which reported metric a figure refers to, when it refers to one. Naming it is what lets the number be
+    # checked against the filer's own statements rather than merely against the sentence it was quoted from:
+    # a model can cite a real sentence about revenue and still state the wrong revenue.
+    metric: str | None = Field(None, description='canonical metric this figure reports, if it reports one')
     evidence: list[EvidenceRequest] = Field(default_factory=list, max_length=6)
     attacks: list[str] = Field(default_factory=list, description='claim ids this one disputes')
+
+    @property
+    def is_checkable_number(self) -> bool:
+        """True if this claim states a figure that can be compared against a reported one."""
+        return self.claim_type is ClaimType.NUMERIC and self.numeric_value is not None and bool(self.metric)
 
     @property
     def needs_evidence(self) -> bool:

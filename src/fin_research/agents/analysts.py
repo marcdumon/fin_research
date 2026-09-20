@@ -27,6 +27,10 @@ Rules you must follow:
 - Returning few findings is a correct answer when the source says little. Do not pad.
 - claim_type: 'fact' for something stated in the source, 'numeric' for a figure, 'inference' for a
   conclusion you drew from stated facts, 'judgement' for an opinion. Be honest about which.
+- For a 'numeric' claim, set numeric_value and numeric_unit, and set `metric` to the reported line the figure
+  belongs to -- Revenue, Operating Income, Total Assets, Operating Cash Flow, and so on. Naming it lets the
+  figure be checked against the company's own filed statements. A figure that contradicts them is discarded,
+  so naming the metric protects a correct claim rather than exposing it.
 """.strip()
 
 
@@ -130,8 +134,11 @@ consistency. The result of that check was: {identities}
 Report what the numbers show: growth, margins, cash generation, balance sheet strength, and how these have
 changed. Say which direction each is moving and over what period.
 
-Where you state a figure, it must appear in the source below. Do not compute ratios the source does not
-contain unless you show both inputs from the source in the same claim. Mark such a claim 'inference'.
+Where you state a figure, it must appear in the source below, and its `metric` must name the reported line
+it comes from. Figures are checked against the company's filed statements; one that disagrees is discarded.
+
+Do not compute ratios the source does not contain unless you show both inputs from the source in the same
+claim. Mark such a claim 'inference' rather than 'numeric'.
 
 {CITATION_RULES}
 

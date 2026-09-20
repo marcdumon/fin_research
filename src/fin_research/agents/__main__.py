@@ -54,7 +54,7 @@ async def _run(args: argparse.Namespace) -> int:
 
         async with ModelClient(cfg=cfg, state=state, run_id=prepared.run_id) as client:
             ctx = RunContext(cfg=cfg, state=state, client=client, run_id=prepared.run_id,
-                             ticker=args.ticker, as_of=as_of)
+                             ticker=args.ticker, as_of=as_of, facts=prepared.facts)
             outcome = await run_deep_dive(ctx, prepared.sources, prepared.price)
 
         summary = state.run(prepared.run_id)
@@ -66,7 +66,9 @@ async def _run(args: argparse.Namespace) -> int:
         markdown = render(outcome.report, ctx.sources, groundedness=outcome.groundedness,
                           cost_usd=summary.spend_usd,
                           match_kinds={k: v for result in outcome.results
-                                       for k, v in result.verification.match_kinds().items()})
+                                       for k, v in result.verification.match_kinds().items()},
+                          numeric={k: v for result in outcome.results
+                                   for k, v in result.verification.numeric_outcomes().items()})
 
         destination = args.out or paths.PROJECT_ROOT / 'reports' / f'{args.ticker}_{as_of}.md'
         destination.parent.mkdir(parents=True, exist_ok=True)
