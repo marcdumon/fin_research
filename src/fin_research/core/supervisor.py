@@ -21,8 +21,9 @@ from datetime import date
 
 import duckdb
 
-from fin_research.agents import analysts, debate, synthesis  # noqa: F401  (registers the roster)
-from fin_research.agents.base import AGENTS, AgentResult, RunContext
+from fin_research.agents import AGENTS
+from fin_research.agents.base import AgentResult, RunContext
+from fin_research.agents.debate import thesis_digest
 from fin_research.core.approvals import Rejected, gate
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 from fin_research.core.state import BudgetExceeded, State
@@ -226,13 +227,13 @@ async def run_deep_dive(ctx: RunContext, sources: Sources, price: float | None =
             outcome.results.append(bull)
 
         bear = await _run_agent('bear', ctx, 4, semaphore, findings=outcome.findings,
-                                opposing=debate.thesis_digest(outcome.bull))
+                                opposing=thesis_digest(outcome.bull))
         outcome.bear = bear.artifact if bear else None
         if bear:
             outcome.results.append(bear)
 
         rebuttal = await _run_agent('bull', ctx, 5, semaphore, findings=outcome.findings,
-                                    opposing=debate.thesis_digest(outcome.bear))
+                                    opposing=thesis_digest(outcome.bear))
         outcome.rebuttal = rebuttal.artifact if rebuttal else None
         if rebuttal:
             outcome.results.append(rebuttal)

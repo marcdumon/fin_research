@@ -17,8 +17,8 @@ from datetime import date
 
 import pandas as pd
 
-from fin_research.agents import triage as triage_module  # noqa: F401  (registers the agent)
-from fin_research.agents.base import AGENTS, RunContext
+from fin_research.agents import AGENTS
+from fin_research.agents.base import RunContext
 from fin_research.core.schemas import Triage
 from fin_research.core.state import BudgetExceeded
 from fin_research.ingest.documents import fetch_primary

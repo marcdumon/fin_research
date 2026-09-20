@@ -111,3 +111,31 @@ export function compact(value: number | null | undefined): string {
 export function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
+
+export interface MonitorAlert {
+  ticker: string
+  check_name: string
+  severity: 'high' | 'medium' | 'low'
+  headline: string
+  detail: string | null
+  reference: string | null
+  as_of: string
+  created_at: string
+}
+
+export const listAlerts = () => get<MonitorAlert[]>('/api/alerts?limit=60')
+
+export async function acknowledgeAlerts(ticker?: string): Promise<void> {
+  const query = ticker ? `?ticker=${encodeURIComponent(ticker)}` : ''
+  await fetch(`/api/alerts/acknowledge${query}`, { method: 'POST' })
+}
+
+export async function startRun(ticker: string, budgetUsd: number, gateTiers: string[]): Promise<string | null> {
+  const response = await fetch('/api/runs', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ticker, budget_usd: budgetUsd, gate_tiers: gateTiers }),
+  })
+  if (!response.ok) throw new Error((await response.json()).detail ?? 'could not start the run')
+  return (await response.json()).run_id
+}

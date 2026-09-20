@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
-import { decide, isRunning, listRuns, money, type Run } from './api'
+import { decide, isRunning, listAlerts, listRuns, money, type MonitorAlert, type Run } from './api'
+import { Alerts } from './components/Alerts'
 import { CallTape } from './components/CallTape'
+import { NewRun } from './components/NewRun'
 import { SpendTape } from './components/SpendTape'
 import { Stages } from './components/Stages'
 import { useRunStream } from './useRunStream'
@@ -13,14 +15,32 @@ const STATUS_WORDING: Record<string, string> = {
   failed: 'Failed',
 }
 
-function RunRail({ runs, selected, onSelect }: {
+function RunRail({ runs, selected, onSelect, view, onView, alertCount, onStarted }: {
   runs: Run[]
   selected: string | null
   onSelect: (id: string) => void
+  view: 'runs' | 'alerts'
+  onView: (view: 'runs' | 'alerts') => void
+  alertCount: number
+  onStarted: (runId: string) => void
 }) {
   return (
     <nav aria-label="Runs" className="lg:w-64 lg:shrink-0 lg:border-r border-rule lg:h-dvh lg:overflow-y-auto">
-      <h1 className="px-4 py-4 text-[15px] font-semibold border-b border-rule">Research runs</h1>
+      <div className="flex border-b border-rule">
+        {(['runs', 'alerts'] as const).map((name) => (
+          <button
+            key={name}
+            onClick={() => onView(name)}
+            aria-current={view === name ? 'page' : undefined}
+            className={`flex-1 px-4 py-3.5 text-[14px] text-left border-r border-rule last:border-r-0
+              ${view === name ? 'font-semibold bg-surface' : 'text-muted hover:text-ink'}`}
+          >
+            {name === 'runs' ? 'Runs' : `Changes${alertCount ? ` (${alertCount})` : ''}`}
+          </button>
+        ))}
+      </div>
+
+      <NewRun onStarted={onStarted} />
       {/* Capped on narrow screens so a long history does not push the run itself below the fold. */}
       <ul className="max-h-64 overflow-y-auto lg:max-h-none lg:overflow-visible">
         {runs.map((run) => {
@@ -55,13 +75,20 @@ function RunRail({ runs, selected, onSelect }: {
 export default function App() {
   const [runs, setRuns] = useState<Run[]>([])
   const [selected, setSelected] = useState<string | null>(null)
+  const [view, setView] = useState<'runs' | 'alerts'>('runs')
+  const [alerts, setAlerts] = useState<MonitorAlert[]>([])
   const { snapshot, calls, approvals, live, justLanded, resolveApproval } = useRunStream(selected)
 
+  const refreshRuns = () => listRuns().then((found) => {
+    setRuns(found)
+    setSelected((current) => current ?? found[0]?.run_id ?? null)
+  })
+
+  const refreshAlerts = () => listAlerts().then(setAlerts).catch(() => setAlerts([]))
+
   useEffect(() => {
-    listRuns().then((found) => {
-      setRuns(found)
-      setSelected((current) => current ?? found[0]?.run_id ?? null)
-    })
+    void refreshRuns()
+    void refreshAlerts()
   }, [])
 
   // Keep the rail's totals honest while a run is moving.
@@ -75,10 +102,20 @@ export default function App() {
 
   return (
     <div className="lg:flex min-h-dvh">
-      <RunRail runs={runs} selected={selected} onSelect={setSelected} />
+      <RunRail
+        runs={runs}
+        selected={selected}
+        onSelect={(id) => { setSelected(id); setView('runs') }}
+        view={view}
+        onView={setView}
+        alertCount={alerts.length}
+        onStarted={(runId) => { void refreshRuns(); setSelected(runId); setView('runs') }}
+      />
 
       <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 lg:h-dvh lg:overflow-y-auto">
-        {!snapshot ? (
+        {view === 'alerts' ? (
+          <Alerts alerts={alerts} onAcknowledged={refreshAlerts} />
+        ) : !snapshot ? (
           <p className="text-muted">
             {runs.length ? 'Loading the run.' : 'No runs yet. Start one from the command line.'}
           </p>

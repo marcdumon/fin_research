@@ -91,6 +91,17 @@ def ensure_schema(con: duckdb.DuckDBPyConnection) -> None:
     con.execute(SCHEMA)
 
 
+def _has_table(con: duckdb.DuckDBPyConnection, table: str) -> bool:
+    """True if a monitoring table exists.
+
+    Read paths test for the table rather than creating it, because a reader may hold a read-only connection
+    -- the dashboard does -- and `CREATE TABLE` there raises. An earlier version called `ensure_schema`
+    everywhere and swallowed that error, so the dashboard reported no alerts while dozens were stored.
+    """
+    return con.execute('SELECT 1 FROM information_schema.tables WHERE table_name = ?',
+                       [table]).fetchone() is not None
+
+
 def watch(con: duckdb.DuckDBPyConnection, tickers: list[str], note: str = '') -> int:
     """Add companies to the watchlist."""
     ensure_schema(con)
@@ -108,14 +119,16 @@ def unwatch(con: duckdb.DuckDBPyConnection, tickers: list[str]) -> None:
 
 def watchlist(con: duckdb.DuckDBPyConnection, include_inactive: bool = False) -> list[str]:
     """Companies currently being patrolled."""
-    ensure_schema(con)
+    if not _has_table(con, 'watchlist'):
+        return []
     clause = '' if include_inactive else 'WHERE active'
     return [row[0] for row in con.execute(f'SELECT ticker FROM watchlist {clause} ORDER BY ticker').fetchall()]
 
 
 def last_seen(con: duckdb.DuckDBPyConnection, ticker: str, check_name: str) -> dict | None:
     """What a check recorded the last time it ran, or None if it never has."""
-    ensure_schema(con)
+    if not _has_table(con, 'observations'):
+        return None
     row = con.execute('SELECT fingerprint, payload, observed_at FROM observations '
                       'WHERE ticker = ? AND check_name = ?', [ticker, check_name]).fetchone()
     if row is None:
@@ -147,7 +160,8 @@ def raise_alerts(con: duckdb.DuckDBPyConnection, alerts: list[Alert], as_of: dat
 
 def open_alerts(con: duckdb.DuckDBPyConnection, ticker: str | None = None, limit: int = 100) -> pd.DataFrame:
     """Alerts nobody has acknowledged, most severe first."""
-    ensure_schema(con)
+    if not _has_table(con, 'alerts'):
+        return pd.DataFrame()
     clause = 'AND ticker = ?' if ticker else ''
     params = [ticker, limit] if ticker else [limit]
     return con.execute(f"""
@@ -160,7 +174,8 @@ def open_alerts(con: duckdb.DuckDBPyConnection, ticker: str | None = None, limit
 
 def acknowledge(con: duckdb.DuckDBPyConnection, ticker: str | None = None) -> int:
     """Mark alerts as seen."""
-    ensure_schema(con)
+    if not _has_table(con, 'alerts'):
+        return 0
     if ticker:
         con.execute('UPDATE alerts SET acknowledged = TRUE WHERE ticker = ?', [ticker.upper()])
     else:

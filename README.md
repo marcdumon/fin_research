@@ -99,7 +99,7 @@ uv run python -m fin_research.agents run --ticker AAPL --budget 2.00
 uv run python -m fin_research.agents run --ticker AAPL --budget 2.00 --gate expensive
 uv run python -m fin_research.agents cost
 
-# Watch it work, and answer the gates.
+# Watch it work, start runs, answer the gates, and read what the monitor found.
 uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
 ```
 
@@ -121,7 +121,7 @@ Prices and fundamentals are not duplicated here: the `investalyze` database is a
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **208 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **220 tests**, none of which touch a network
 or a provider.
 
 **Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against

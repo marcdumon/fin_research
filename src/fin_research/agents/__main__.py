@@ -101,7 +101,7 @@ async def _cost(args: argparse.Namespace) -> int:
 async def _roster(args: argparse.Namespace) -> int:
     """List the agents and the model tier each runs on."""
     cfg = read(args.config)
-    from fin_research.agents.base import AGENTS
+    from fin_research.agents import AGENTS
     for name, agent in sorted(AGENTS.items(), key=lambda kv: kv[1].stage):
         print(f'  stage {agent.stage}  {name:16} {cfg.llm.tier_for(name):10} '
               f'{cfg.llm.model_for(name):28} {AGENT_DESCRIPTIONS[name]}')

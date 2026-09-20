@@ -9,9 +9,12 @@ local database, and adding accounts would be ceremony around a single-user machi
 written down here because it stops holding the moment anyone exposes the port.
 """
 
+import asyncio
 import logging
+import sys
 from pathlib import Path
 
+import duckdb
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -20,6 +23,7 @@ from pydantic import BaseModel
 from fin_research import paths
 from fin_research.config import Config, read
 from fin_research.core.state import State
+from fin_research.ingest import store as store_module
 from fin_research.web.events import run_snapshot, stream
 
 log = logging.getLogger(__name__)
@@ -32,6 +36,14 @@ class Decision(BaseModel):
 
     approved: bool
     note: str | None = None
+
+
+class Launch(BaseModel):
+    """A request to start a research run."""
+
+    ticker: str
+    budget_usd: float = 2.0
+    gate_tiers: list[str] = []
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
@@ -125,11 +137,66 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(404, f'no report for {ticker}')
         return FileResponse(found[0], media_type='text/markdown')
 
+    @app.get('/api/alerts')
+    def list_alerts(ticker: str | None = None, limit: int = 50) -> list[dict]:
+        """Change the monitor noticed and nobody has acknowledged yet."""
+        from fin_research.monitor.store import open_alerts
+
+        with store_module.connect(settings, read_only=True) as con:
+            try:
+                return open_alerts(con, ticker, limit).to_dict('records')
+            except duckdb.Error:
+                return []
+
+    @app.post('/api/alerts/acknowledge')
+    def acknowledge_alerts(ticker: str | None = None) -> dict:
+        """Mark alerts as seen."""
+        from fin_research.monitor.store import acknowledge
+
+        with store_module.connect(settings) as con:
+            acknowledge(con, ticker)
+        return {'acknowledged': ticker or 'all'}
+
+    @app.post('/api/runs')
+    async def start_run(launch: Launch) -> dict:
+        """Start a research run as a separate process.
+
+        Spawned rather than run in the server, for two reasons. A research run takes minutes and would block
+        or complicate the event loop serving the very dashboard watching it. And because run state lives in
+        SQLite, a separate process is already the supported arrangement -- the stream endpoint reads its rows
+        exactly as it reads those of a run started from the command line.
+        """
+        ticker = launch.ticker.strip().upper()
+        if not ticker.isalnum():
+            raise HTTPException(400, f'not a ticker: {launch.ticker!r}')
+
+        command = [sys.executable, '-m', 'fin_research.agents', 'run',
+                   '--ticker', ticker, '--budget', str(launch.budget_usd)]
+        if launch.gate_tiers:
+            command += ['--gate', *launch.gate_tiers]
+
+        before = {row['run_id'] for row in state().query('SELECT run_id FROM runs', ())}
+        process = await asyncio.create_subprocess_exec(
+            *command, cwd=paths.PROJECT_ROOT,
+            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+
+        # The run registers itself on startup, so the dashboard is told which row to follow rather than
+        # having to guess which of several concurrent runs it just caused.
+        for _ in range(60):
+            await asyncio.sleep(0.25)
+            fresh = [row['run_id'] for row in state().query(
+                'SELECT run_id FROM runs WHERE ticker = ? ORDER BY started_at DESC', (ticker,))
+                if row['run_id'] not in before]
+            if fresh:
+                return {'run_id': fresh[0], 'ticker': ticker, 'pid': process.pid}
+
+        return {'run_id': None, 'ticker': ticker, 'pid': process.pid,
+                'note': 'started, but it has not registered yet'}
+
     @app.get('/api/agents')
     def list_agents() -> list[dict]:
         """The roster, and which model each agent runs on."""
-        from fin_research.agents import analysts, debate, synthesis  # noqa: F401  (registers the roster)
-        from fin_research.agents.base import AGENT_DESCRIPTIONS, AGENTS
+        from fin_research.agents import AGENT_DESCRIPTIONS, AGENTS
 
         return [{'name': name, 'stage': agent.stage, 'output_type': agent.output_type,
                  'tier': settings.llm.tier_for(name), 'model': settings.llm.model_for(name),
