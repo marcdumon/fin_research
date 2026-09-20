@@ -198,7 +198,10 @@ def main() -> int:
 
     args = parser.parse_args()
     configure_logging(args.log_level)
-    load_dotenv()
+    # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
+    # calling frame's file, which silently finds nothing when the package is installed elsewhere
+    # or invoked from another directory.
+    load_dotenv(paths.PROJECT_ROOT / '.env')
     return asyncio.run(COMMANDS[args.command](args))
 
 

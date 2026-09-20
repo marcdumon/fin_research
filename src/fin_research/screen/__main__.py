@@ -100,7 +100,10 @@ async def _funnel(args: argparse.Namespace) -> int:
     from fin_research.llm.client import ModelClient
     from fin_research.screen.funnel import run_funnel
 
-    load_dotenv()
+    # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
+    # calling frame's file, which silently finds nothing when the package is installed elsewhere
+    # or invoked from another directory.
+    load_dotenv(paths.PROJECT_ROOT / '.env')
     cfg = read(args.config)
     screens = rules.load(args.screens)
     if args.screen not in screens:
