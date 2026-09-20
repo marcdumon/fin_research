@@ -20,6 +20,7 @@ from typing import Protocol
 from pydantic import BaseModel
 
 from fin_research.config import Config
+from fin_research.core.passages import PassageIndex
 from fin_research.core.schemas import Claim, Finding, FindingSet
 from fin_research.core.state import State
 from fin_research.core.verification import FactIndex, SourceText, VerificationReport, surviving_findings, verify_claims
@@ -48,13 +49,20 @@ class RunContext:
     ticker: str
     as_of: date
     sources: dict[str, SourceText] = field(default_factory=dict)
+    passages: dict[str, PassageIndex] = field(default_factory=dict)
     # What the company actually reported. Without it a figure is only checked against the sentence it was
     # quoted from, which a model can satisfy while stating the wrong number.
     facts: FactIndex | None = None
 
     def add_source(self, document_id: str, text: str) -> None:
-        """Register a document that agents may cite."""
+        """Register a document that agents may cite, numbering its passages."""
         self.sources[document_id] = SourceText(text)
+        self.passages[document_id] = PassageIndex.build(document_id, text)
+
+    def numbered(self, document_id: str) -> str:
+        """The document as the model should see it: passages, numbered."""
+        index = self.passages.get(document_id)
+        return index.render() if index else ''
 
 
 @dataclass(frozen=True)
@@ -129,12 +137,12 @@ class Analyst:
         that failed. A finding left with no surviving claims is discarded entirely.
         """
         if isinstance(artifact, FindingSet):
-            kept, report = surviving_findings(list(artifact.findings), ctx.sources, ctx.facts)
+            kept, report = surviving_findings(list(artifact.findings), ctx.sources, ctx.facts, ctx.passages)
             return artifact.model_copy(update={'findings': kept}), report
 
         claims = getattr(artifact, 'claims', None)
         if isinstance(claims, list) and all(isinstance(c, Claim) for c in claims):
-            report = verify_claims(claims, ctx.sources, ctx.facts)
+            report = verify_claims(claims, ctx.sources, ctx.facts, ctx.passages)
             return artifact.model_copy(update={'claims': [v.claim for v in report.grounded]}), report
 
         return artifact, VerificationReport(verdicts=())

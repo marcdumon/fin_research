@@ -12,6 +12,7 @@ written down here because it stops holding the moment anyone exposes the port.
 import asyncio
 import logging
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import duckdb
@@ -29,6 +30,23 @@ from fin_research.web.events import run_snapshot, stream
 log = logging.getLogger(__name__)
 
 FRONTEND = Path(__file__).parent / 'static'
+
+
+class _NoCacheIndex(StaticFiles):
+    """Static files, except that the entry page is never cached.
+
+    Asset filenames carry a content hash and can be cached forever, but `index.html` names which assets to
+    load. Letting a browser cache it means a rebuilt front end keeps serving the previous bundle, and the
+    symptom is a page that looks fine while behaving like older code -- which cost two debugging sessions
+    before the cause was obvious.
+    """
+
+    async def get_response(self, path: str, scope):
+        """Serve normally, then forbid caching of the entry page."""
+        response = await super().get_response(path, scope)
+        if path in ('.', '', 'index.html'):
+            response.headers['Cache-Control'] = 'no-store, must-revalidate'
+        return response
 
 
 class Decision(BaseModel):
@@ -171,14 +189,22 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             raise HTTPException(400, f'not a ticker: {launch.ticker!r}')
 
         command = [sys.executable, '-m', 'fin_research.agents', 'run',
-                   '--ticker', ticker, '--budget', str(launch.budget_usd)]
+                   '--ticker', ticker, '--budget', str(launch.budget_usd), '--log-level', 'INFO']
         if launch.gate_tiers:
             command += ['--gate', *launch.gate_tiers]
 
         before = {row['run_id'] for row in state().query('SELECT run_id FROM runs', ())}
+
+        # Kept rather than discarded. A run started from here used to send its output to /dev/null, so when
+        # one stalled there was nothing to look at -- the ledger says a call is in flight but not what the
+        # provider said about it.
+        logs = settings.data_root / 'runs'
+        logs.mkdir(parents=True, exist_ok=True)
+        log_file = logs / f'{ticker}-{datetime.now().strftime("%Y%m%d-%H%M%S")}.log'
+        handle = log_file.open('w')
+
         process = await asyncio.create_subprocess_exec(
-            *command, cwd=paths.PROJECT_ROOT,
-            stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            *command, cwd=paths.PROJECT_ROOT, stdout=handle, stderr=asyncio.subprocess.STDOUT)
 
         # The run registers itself on startup, so the dashboard is told which row to follow rather than
         # having to guess which of several concurrent runs it just caused.
@@ -188,9 +214,9 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 'SELECT run_id FROM runs WHERE ticker = ? ORDER BY started_at DESC', (ticker,))
                 if row['run_id'] not in before]
             if fresh:
-                return {'run_id': fresh[0], 'ticker': ticker, 'pid': process.pid}
+                return {'run_id': fresh[0], 'ticker': ticker, 'pid': process.pid, 'log': str(log_file)}
 
-        return {'run_id': None, 'ticker': ticker, 'pid': process.pid,
+        return {'run_id': None, 'ticker': ticker, 'pid': process.pid, 'log': str(log_file),
                 'note': 'started, but it has not registered yet'}
 
     @app.get('/api/agents')
@@ -204,7 +230,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                 for name, agent in sorted(AGENTS.items(), key=lambda kv: (kv[1].stage, kv[0]))]
 
     if FRONTEND.is_dir():
-        app.mount('/', StaticFiles(directory=FRONTEND, html=True), name='frontend')
+        app.mount('/', _NoCacheIndex(directory=FRONTEND, html=True), name='frontend')
 
     return app
 

@@ -50,9 +50,11 @@ no convergence loop.
 
 ## The guarantees
 
-- **A fabricated citation cannot reach the report.** Agents quote; they never supply offsets, because models
-  cannot count characters. The verifier locates each quote in the canonical text and assigns the offsets
-  itself. A quote that is not found is discarded along with the claim it supported.
+- **A fabricated citation cannot reach the report.** Sources are split into numbered passages and agents
+  cite a number, which the verifier resolves to exact offsets. Agents never supply offsets themselves.
+  Quoting is still accepted and still matched, but numbering is preferred because models reproduce a sentence
+  with a word changed often enough to make verbatim quotation unreliable. A citation that does not resolve is
+  discarded along with the claim it supported.
 - **Numbers are checked against the filer's own arithmetic, twice over.** Every stated figure is compared
   against what the company actually reported, so a model that quotes a real sentence and states the wrong
   revenue has the claim dropped — span checking alone passes that, which is why it is not enough. Separately,
@@ -123,12 +125,12 @@ Prices and fundamentals are not duplicated here: the `investalyze` database is a
 ## Where it stands
 
 Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
-accounting identities at **363 of 364** checks across 22 filers. **229 tests**, none of which touch a network
+accounting identities at **363 of 364** checks across 22 filers. **244 tests**, none of which touch a network
 or a provider.
 
-**Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against
-recorded fakes, which tests this code against a model of how providers behave. The first real run is a
-discovery step, not a confirmation one.
+Measured on real runs against `deepseek/deepseek-chat`: 27 claims produced across the four reading agents,
+0 dropped, all citing by passage number. Earlier prompt and schema versions dropped between 89% and 100% of
+claims; see HANDOFF.md for what changed.
 
 Known limits, all flagged in code rather than hidden:
 

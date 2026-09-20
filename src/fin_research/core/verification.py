@@ -22,6 +22,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from fin_research.core.passages import PassageIndex
 from fin_research.core.schemas import Claim, Evidence, EvidenceKind, EvidenceRequest, Finding, MatchKind
 
 log = logging.getLogger(__name__)
@@ -221,7 +222,11 @@ class FactIndex:
         for value in reported:
             if verify_numeric(claim, value) or verify_numeric(claim, abs(value)):
                 return NumericVerdict.CONFIRMED, value
-        return NumericVerdict.CONTRADICTED, reported[0]
+
+        # Report the nearest reported figure rather than an arbitrary one, so the message says something
+        # useful about how far off the claim was.
+        stated = (claim.numeric_value or 0) * parse_scale(claim.numeric_unit)
+        return NumericVerdict.CONTRADICTED, min(reported, key=lambda v: abs(abs(v) - abs(stated)))
 
 
 def _evidence_id(request: EvidenceRequest, match: Match | None) -> str:
@@ -232,8 +237,12 @@ def _evidence_id(request: EvidenceRequest, match: Match | None) -> str:
     return digest(request.document_id, match.char_start, match.char_end)
 
 
-def verify_evidence(request: EvidenceRequest, sources: dict[str, SourceText]) -> Evidence:
+def verify_evidence(request: EvidenceRequest, sources: dict[str, SourceText],
+                    passages: dict[str, PassageIndex] | None = None) -> Evidence:
     """Resolve one piece of offered evidence into a confirmed record, matched or not.
+
+    A passage number resolves exactly, with no matching involved: the offsets come from the passage table.
+    A quotation still goes down the matching ladder, so an agent that quotes is held to the old standard.
 
     Evidence that names no document, or a document that was never ingested, is recorded as unmatched rather
     than skipped -- an unresolvable citation is exactly as suspect as a wrong one, and silently dropping it
@@ -243,6 +252,16 @@ def verify_evidence(request: EvidenceRequest, sources: dict[str, SourceText]) ->
         return Evidence(evidence_id=_evidence_id(request, None), kind=request.kind,
                         match_kind=MatchKind.EXACT if request.fact_id else MatchKind.NONE,
                         fact_id=request.fact_id, document_id=request.document_id)
+
+    index = (passages or {}).get(request.document_id or '')
+    if request.passage_id is not None and index is not None:
+        passage = index.get(request.passage_id)
+        if passage is not None:
+            return Evidence(
+                evidence_id=_evidence_id(request, None), kind=EvidenceKind.SPAN, match_kind=MatchKind.EXACT,
+                document_id=request.document_id, section_id=request.section_id,
+                char_start=passage.char_start, char_end=passage.char_end,
+                quoted_text=request.quoted_text, matched_text=passage.text)
 
     source = sources.get(request.document_id or '')
     match = source.locate(request.quoted_text or '') if source else None
@@ -276,8 +295,8 @@ class ClaimVerdict:
         return max(spans, key=lambda k: [m.value for m in MatchKind].index(k.value)) if spans else None
 
 
-def verify_claim(claim: Claim, sources: dict[str, SourceText],
-                 facts: FactIndex | None = None) -> ClaimVerdict:
+def verify_claim(claim: Claim, sources: dict[str, SourceText], facts: FactIndex | None = None,
+                 passages: dict[str, PassageIndex] | None = None) -> ClaimVerdict:
     """Check one claim's citations, and its arithmetic where there is arithmetic to check.
 
     Judgement claims are exempt by design -- 'this is a good business' cannot be grounded in a quote, and
@@ -288,7 +307,7 @@ def verify_claim(claim: Claim, sources: dict[str, SourceText],
     match what the company reported. Those are different failures. A model can quote a real sentence about
     revenue and state the wrong revenue, and span checking alone would pass it.
     """
-    evidence = tuple(verify_evidence(request, sources) for request in claim.evidence)
+    evidence = tuple(verify_evidence(request, sources, passages) for request in claim.evidence)
 
     if not claim.needs_evidence:
         return ClaimVerdict(claim=claim, evidence=evidence, grounded=True, reason='judgement, exempt by design')
@@ -369,17 +388,19 @@ class VerificationReport:
         return counts
 
 
-def verify_claims(claims: list[Claim], sources: dict[str, SourceText],
-                  facts: FactIndex | None = None) -> VerificationReport:
+def verify_claims(claims: list[Claim], sources: dict[str, SourceText], facts: FactIndex | None = None,
+                  passages: dict[str, PassageIndex] | None = None) -> VerificationReport:
     """Check every claim in a batch."""
-    report = VerificationReport(verdicts=tuple(verify_claim(claim, sources, facts) for claim in claims))
+    report = VerificationReport(
+        verdicts=tuple(verify_claim(claim, sources, facts, passages) for claim in claims))
     for verdict in report.rejected:
         log.warning(f'dropping claim: {verdict.reason} -- {verdict.claim.text[:90]}')
     return report
 
 
 def surviving_findings(findings: list[Finding], sources: dict[str, SourceText],
-                       facts: FactIndex | None = None) -> tuple[list[Finding], VerificationReport]:
+                       facts: FactIndex | None = None,
+                       passages: dict[str, PassageIndex] | None = None) -> tuple[list[Finding], VerificationReport]:
     """Strip ungrounded claims out of findings before anything downstream reads them.
 
     Dropping happens here rather than at report time so an expensive model never sees, and never builds on,
@@ -389,7 +410,7 @@ def surviving_findings(findings: list[Finding], sources: dict[str, SourceText],
     kept: list[Finding] = []
 
     for finding in findings:
-        report = verify_claims(finding.claims, sources, facts)
+        report = verify_claims(finding.claims, sources, facts, passages)
         verdicts.extend(report.verdicts)
         survivors = [v.claim for v in report.grounded]
         if survivors:

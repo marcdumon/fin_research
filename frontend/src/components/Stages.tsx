@@ -1,5 +1,10 @@
 import { money, type Task } from '../api'
 
+function elapsed(startedAt: string): string {
+  const seconds = Math.max(0, Math.round((Date.now() - new Date(startedAt).getTime()) / 1000))
+  return seconds < 90 ? `${seconds}s` : `${Math.round(seconds / 60)}m`
+}
+
 // Numbered because the route genuinely is a sequence: readers first, then the statements, then a debate that
 // only makes sense in order, then the write-up. Not numbered for decoration.
 const STAGE_NAMES: Record<number, string> = {
@@ -25,7 +30,16 @@ export function Stages({ tasks }: { tasks: Task[] }) {
     return <p className="text-muted text-[15px]">No agent has started yet.</p>
   }
 
+  const working = tasks.filter((task) => task.status === 'running')
+
   return (
+    <>
+      {working.length > 0 && (
+        <p className="mb-3 text-[13.5px] text-muted">
+          {working.length} reading now. Each one works through a whole section of the filing, so the first
+          results take a minute or two to come back.
+        </p>
+      )}
     <ol className="border-t border-rule">
       {stages.map((stage) => {
         const inStage = tasks.filter((t) => t.stage === stage)
@@ -40,7 +54,7 @@ export function Stages({ tasks }: { tasks: Task[] }) {
                       className="grid grid-cols-[10rem_5rem_auto] gap-x-4 items-baseline text-[14px]">
                     <span className="truncate">{task.agent}</span>
                     <span className={`text-[12.5px] ${STATUS_STYLE[task.status] ?? 'text-muted'}`}>
-                      {task.status === 'running' ? 'working' : task.status}
+                      {task.status === 'running' ? `working ${elapsed(task.started_at)}` : task.status}
                     </span>
                     <span className="text-muted">{money(task.cost_usd)}</span>
                   </li>
@@ -54,5 +68,6 @@ export function Stages({ tasks }: { tasks: Task[] }) {
         )
       })}
     </ol>
+    </>
   )
 }

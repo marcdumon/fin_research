@@ -19,6 +19,38 @@ from pydantic import BaseModel, ValidationError
 
 log = logging.getLogger(__name__)
 
+def strict_schema(schema: type[BaseModel]) -> dict:
+    """A JSON schema a provider's strict mode will honour, from a pydantic model.
+
+    Strict structured output requires every property of every object to appear in `required`; a field left
+    out is one the model may silently omit. Pydantic marks only fields without defaults as required, so a
+    field like `evidence` -- which has a sensible empty default in Python -- arrives at the model as optional
+    and simply does not get filled in.
+
+    That is not a hypothetical. Every claim of a first real run was discarded for offering no evidence: the
+    model was never told it had to supply any, because the schema said it was optional.
+
+    Making a field required does not make it non-empty, so the prompt still has to ask for substance. What
+    this removes is the affordance to skip the field entirely.
+    """
+    return _require_all(schema.model_json_schema())
+
+
+def _require_all(node: object) -> object:
+    """Recursively mark every declared property as required."""
+    if isinstance(node, list):
+        return [_require_all(item) for item in node]
+    if not isinstance(node, dict):
+        return node
+
+    transformed = {key: _require_all(value) for key, value in node.items()}
+    properties = transformed.get('properties')
+    if isinstance(properties, dict) and properties:
+        transformed['required'] = list(properties)
+        transformed.setdefault('additionalProperties', False)
+    return transformed
+
+
 _FENCED = re.compile(r'```(?:json)?\s*(.+?)```', re.DOTALL | re.IGNORECASE)
 # Trailing commas before a closing brace or bracket are the single most common malformation.
 _TRAILING_COMMA = re.compile(r',\s*([}\]])')

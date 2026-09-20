@@ -15,23 +15,57 @@ from dataclasses import dataclass
 
 from fin_research.agents.base import Analyst, RunContext, register, truncate
 from fin_research.core.schemas import FindingSet
+from fin_research.ingest.anchors import METRIC_ANCHORS
+
+# The only names `metric` may take. Given to the model because it otherwise invents plausible ones: a first
+# real run labelled a segment's revenue as total Revenue, and the figure was rejected for disagreeing with a
+# number it was never meant to equal. A figure that is not one of these lines belongs to no metric at all.
+METRIC_NAMES = ', '.join(sorted(METRIC_ANCHORS))
 
 CITATION_RULES = """
-Every factual or numeric claim must carry evidence: a VERBATIM quote from the source, copied exactly,
-long enough to be unambiguous (at least a dozen characters). Set document_id to the id given below.
+The source below is split into numbered passages. EVERY claim must cite at least one passage number. A claim
+with an empty `evidence` list is thrown away, and so is the work that produced it.
 
-Rules you must follow:
-- Quote exactly. A quote that does not appear in the source word for word is discarded, and the claim with it.
-- Never state a figure the source does not contain. Do not calculate, round or convert unless asked.
-- If the source does not support something, say so in `unresolved` rather than inventing it.
-- Returning few findings is a correct answer when the source says little. Do not pad.
-- claim_type: 'fact' for something stated in the source, 'numeric' for a figure, 'inference' for a
-  conclusion you drew from stated facts, 'judgement' for an opinion. Be honest about which.
-- For a 'numeric' claim, set numeric_value and numeric_unit, and set `metric` to the reported line the figure
-  belongs to -- Revenue, Operating Income, Total Assets, Operating Cash Flow, and so on. Naming it lets the
-  figure be checked against the company's own filed statements. A figure that contradicts them is discarded,
-  so naming the metric protects a correct claim rather than exposing it.
+Cite by number, not by quoting. You cannot mistype a number the way you can mistype a sentence, and a claim
+whose citation does not resolve is discarded however accurate the claim was.
+
+{
+  "headline": "Sales are concentrated in a first-quarter peak",
+  "detail": "The filing describes a seasonal pattern.",
+  "claims": [
+    {
+      "claim_type": "fact",
+      "text": "Sales are historically highest in the first quarter, partly from holiday demand",
+      "evidence": [{"kind": "span", "document_id": "<the document_id given above>", "passage_id": 57}]
+    }
+  ],
+  "tags": []
+}
+
+Rules:
+- Cite the passage that actually says it. A number picked because it looks about right is a wrong citation.
+- Write the claim in your own words. The passage number carries the proof, so you need not repeat the text.
+- Never state a figure no passage contains. Do not calculate, round or convert unless asked.
+- If no passage supports something, put it in `unresolved` rather than claiming it.
+- Few findings is a correct answer when the source says little. Do not pad.
+- claim_type: 'fact' for something a passage states, 'numeric' for a figure, 'inference' for a conclusion you
+  drew from stated facts, 'judgement' for an opinion. Be honest about which.
+- For a 'numeric' claim, set numeric_value and numeric_unit, and see the metric list below.
+- Set unused fields to null rather than leaving them out.
 """.strip()
+
+# Appended rather than interpolated: the rules above contain a JSON example, and braces in an f-string are
+# read as placeholders.
+CITATION_RULES += f"""
+
+Set `metric` ONLY when a figure is one of these exact company-wide lines:
+
+  {METRIC_NAMES}
+
+Set `metric` to null for anything else -- a segment, a region, a product line, a percentage, a headcount.
+A segment's revenue is not Revenue, and labelling it so gets a correct claim thrown away for disagreeing
+with a total it was never meant to equal. Where the metric is named, the figure is checked against the
+company's own filed statements, so naming it correctly protects the claim."""
 
 
 @dataclass
@@ -46,6 +80,7 @@ class SourceAnalyst(Analyst):
         document_id = str(inputs['document_id'])
         text = str(inputs['text'])
         label = str(inputs.get('label', 'the filing'))
+        numbered = ctx.numbered(document_id)
 
         return f"""Company: {ctx.ticker}. Source: {label}. document_id: {document_id}
 
@@ -55,8 +90,8 @@ class SourceAnalyst(Analyst):
 
 {CITATION_RULES}
 
---- SOURCE BEGINS ---
-{truncate(text, limit)}
+--- SOURCE BEGINS (numbered passages) ---
+{truncate(numbered or text, limit)}
 --- SOURCE ENDS ---"""
 
 
@@ -74,8 +109,9 @@ business = register(SourceAnalyst(
 
 risk_factors = register(SourceAnalyst(
     name='risk_factors',
-    system_prompt='You are an equity analyst reading the risk factors of a company filing. You report only '
-                  'what the document states, and you quote it.',
+    system_prompt='You are an equity analyst reading the risk factors of a company filing. You report only what '
+                  'the document states, and every claim you make carries a verbatim quote from it. A claim '
+                  'without a quote is worthless and will be discarded.',
     task='Identify the risks that could materially change this company\'s earnings or its ability to operate.',
     guidance='Most risk factors are boilerplate that every filer includes. Prioritise those that are specific '
              'to this company, newly worded, or attached to a number. Ignore generic ones unless the filing '
@@ -142,8 +178,8 @@ claim. Mark such a claim 'inference' rather than 'numeric'.
 
 {CITATION_RULES}
 
---- STATEMENTS BEGIN ---
-{truncate(statements, limit)}
+--- STATEMENTS BEGIN (numbered passages) ---
+{truncate(ctx.numbered(document_id) or statements, limit)}
 --- STATEMENTS END ---"""
 
 

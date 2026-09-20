@@ -74,14 +74,19 @@ class Polarity(StrEnum):
 class EvidenceRequest(Strict):
     """What an agent is permitted to emit in support of a claim.
 
-    Deliberately minimal. The agent names a source and quotes from it verbatim; it does not say where in the
-    source the quote is, because it cannot know and would guess.
+    Deliberately minimal, and it never carries an offset: the agent names a passage of a source, and the
+    verifier turns that into a location. An earlier version asked for a verbatim quote instead, which failed
+    in the most awkward way possible -- models reproduce a sentence with one word changed, leaving an
+    accurate claim with an uncheckable citation.
     """
 
     kind: EvidenceKind = EvidenceKind.SPAN
-    document_id: str | None = Field(None, description='document the quote is taken from')
+    document_id: str | None = Field(None, description='document this evidence comes from')
+    # The preferred form. Sources are shown to the model with numbered passages, and citing the number is
+    # exact by construction -- a number cannot be paraphrased, which quotations demonstrably can be.
+    passage_id: int | None = Field(None, description='number of the passage in the source, as shown')
     section_id: str | None = Field(None, description='section of that document, when known')
-    quoted_text: str | None = Field(None, max_length=800, description='verbatim quote from the source')
+    quoted_text: str | None = Field(None, max_length=800, description='verbatim quote, if citing by text')
     fact_id: str | None = Field(None, description='reported metric this claim rests on')
 
 

@@ -102,12 +102,16 @@ def load_sources(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> So
 def load_facts(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> FactIndex:
     """Every metric the company had reported by `as_of`, indexed for checking agents' figures.
 
+    Both annual and quarterly periods are loaded. An earlier version took only annual figures, and rejected a
+    press release correctly quoting quarterly revenue because it did not match any full-year number -- a
+    false rejection, and the worse kind of error here, since it discards work that was right.
+
     Filtered on the filing date like everything else: a run dated 2023 must not verify a claim against a
     figure published in 2025, which would quietly turn a look-ahead error into a passing check.
     """
     rows = con.execute("""
         SELECT metric, value FROM facts
-        WHERE ticker = ? AND filed <= ? AND metric IS NOT NULL AND period_type = 'A'
+        WHERE ticker = ? AND filed <= ? AND metric IS NOT NULL
     """, [ticker, as_of]).fetchall()
 
     from dataclasses import make_dataclass

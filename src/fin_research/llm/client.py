@@ -26,7 +26,7 @@ from pydantic import BaseModel
 
 from fin_research.config import Config
 from fin_research.core.state import State
-from fin_research.llm.parsing import ParseError, ParseMode, coerce
+from fin_research.llm.parsing import ParseError, ParseMode, coerce, strict_schema
 from fin_research.llm.router import ModelChoice, estimate_tokens, resolve
 
 log = logging.getLogger(__name__)
@@ -142,7 +142,7 @@ class ModelClient:
             body['response_format'] = {
                 'type': 'json_schema',
                 'json_schema': {'name': request.schema.__name__, 'strict': True,
-                                'schema': request.schema.model_json_schema()},
+                                'schema': strict_schema(request.schema)},
             }
         return body
 
