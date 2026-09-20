@@ -1,0 +1,58 @@
+import { money, type Task } from '../api'
+
+// Numbered because the route genuinely is a sequence: readers first, then the statements, then a debate that
+// only makes sense in order, then the write-up. Not numbered for decoration.
+const STAGE_NAMES: Record<number, string> = {
+  1: 'Read the filing',
+  2: 'Read the statements',
+  3: 'Argue the constructive case',
+  4: 'Argue the sceptical case',
+  5: 'Rebut, and value',
+  6: 'Write the note',
+}
+
+const STATUS_STYLE: Record<string, string> = {
+  running: 'text-link',
+  done: 'text-ink',
+  failed: 'text-expensive',
+  skipped: 'text-dropped',
+}
+
+export function Stages({ tasks }: { tasks: Task[] }) {
+  const stages = [...new Set(tasks.map((t) => t.stage))].sort((a, b) => a - b)
+
+  if (!stages.length) {
+    return <p className="text-muted text-[15px]">No agent has started yet.</p>
+  }
+
+  return (
+    <ol className="border-t border-rule">
+      {stages.map((stage) => {
+        const inStage = tasks.filter((t) => t.stage === stage)
+        return (
+          <li key={stage} className="border-b border-rule py-3 grid grid-cols-[2.5rem_1fr] gap-x-3">
+            <span className="text-[13px] text-muted pt-0.5">{stage}</span>
+            <div>
+              <h3 className="text-[15px] font-medium">{STAGE_NAMES[stage] ?? `Stage ${stage}`}</h3>
+              <ul className="mt-1.5 space-y-1">
+                {inStage.map((task) => (
+                  <li key={task.task_id}
+                      className="grid grid-cols-[10rem_5rem_auto] gap-x-4 items-baseline text-[14px]">
+                    <span className="truncate">{task.agent}</span>
+                    <span className={`text-[12.5px] ${STATUS_STYLE[task.status] ?? 'text-muted'}`}>
+                      {task.status === 'running' ? 'working' : task.status}
+                    </span>
+                    <span className="text-muted">{money(task.cost_usd)}</span>
+                  </li>
+                ))}
+              </ul>
+              {inStage.filter((t) => t.error).map((task) => (
+                <p key={`${task.task_id}-error`} className="mt-1 text-[13px] text-expensive">{task.error}</p>
+              ))}
+            </div>
+          </li>
+        )
+      })}
+    </ol>
+  )
+}

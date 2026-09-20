@@ -1,0 +1,48 @@
+@import 'tailwindcss';
+
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;450;500;600;700&display=swap');
+
+@theme {
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Cool paper rather than cream, so the tier ramp below reads as the only warmth on the page. */
+  --color-ground: #edf0f3;
+  --color-surface: #ffffff;
+  --color-ink: #1a2028;
+  --color-muted: #667382;
+  --color-rule: #d3dae1;
+
+  /* The product's organising idea: cost follows verifiability. This ramp is information, not decoration. */
+  --color-cheap: #3e7a5e;
+  --color-mid: #b5762a;
+  --color-expensive: #a03c3c;
+
+  /* Deliberately off the ramp: a dropped claim is not "expensive", and must never read as though it were. */
+  --color-dropped: #6b6480;
+  --color-link: #2a5fa8;
+}
+
+html { background: var(--color-ground); }
+
+body {
+  margin: 0;
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  /* Figures must align down a column; tabular numerals do that without a monospace face everywhere. */
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Motion answers an action or marks arriving data. Nothing animates merely on load. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+@keyframes land {
+  from { background-color: color-mix(in srgb, var(--color-link) 14%, transparent); }
+  to   { background-color: transparent; }
+}
+.landed { animation: land 1.2s ease-out; }
+
+:focus-visible { outline: 2px solid var(--color-link); outline-offset: 2px; }

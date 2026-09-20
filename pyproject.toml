@@ -5,11 +5,13 @@ description = 'Autonomous equity research agent swarm over SEC filings'
 requires-python = '>=3.13'
 dependencies = [
     'duckdb>=1.5.4,<2',
+    "fastapi>=0.141.1",
     'httpx>=0.28',
     'lxml>=5.3',
     'pandas>=2.2',
     'pydantic>=2.11',
     'python-dotenv>=1.0',
+    "uvicorn[standard]>=0.53.0",
 ]
 
 [dependency-groups]

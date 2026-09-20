@@ -14,3 +14,6 @@ reports/
 # template the README tells you to copy.
 .env
 !.env.example
+frontend/node_modules/
+frontend/dist/
+src/fin_research/web/static/
