@@ -111,12 +111,58 @@ async def _roster(args: argparse.Namespace) -> int:
     return 0
 
 
-COMMANDS = {'run': _run, 'cost': _cost, 'roster': _roster}
+async def _check(args: argparse.Namespace) -> int:
+    """Send each artifact schema to the model that will receive it, and report which are accepted.
+
+    Providers differ in what structured output they will take, and a rejection arrives as a 400 at the point
+    of use -- which is after the cheap stages have already run and been paid for. One such rejection cost a
+    complete run: the report schema was past Anthropic's nesting limit while every other schema on the same
+    model was fine. This asks the question beforehand, for a fraction of a cent.
+    """
+    from fin_research.agents import AGENTS
+    from fin_research.core.schemas import ARTIFACTS
+    from fin_research.core.state import State
+    from fin_research.llm.client import ModelClient, ModelRequest
+
+    cfg = read(args.config)
+    load_dotenv(paths.PROJECT_ROOT / '.env')
+
+    # One representative agent per artifact type, so each schema is tried against the model it will meet.
+    owners: dict[str, str] = {}
+    for name, agent in AGENTS.items():
+        owners.setdefault(agent.output_type, name)
+
+    failures = 0
+    with State(cfg.state_path) as state:
+        run_id = state.start_run('schema-check', None, date.today(), budget_usd=0.5, config={'check': True})
+        async with ModelClient(cfg=cfg, state=state, run_id=run_id) as client:
+            for artifact_type, schema in ARTIFACTS.items():
+                agent = owners.get(artifact_type)
+                if agent is None:
+                    continue
+                model = cfg.llm.model_for(agent)
+                request = ModelRequest(agent=agent, system='Reply with the requested structure.',
+                                       user='Produce a minimal valid example.', schema=schema,
+                                       max_tokens=2000)
+                try:
+                    await client.call(request)
+                    print(f'  {artifact_type:12} {model:28} accepted')
+                except Exception as error:
+                    failures += 1
+                    print(f'  {artifact_type:12} {model:28} REJECTED: {str(error)[:90]}')
+        state.finish_run(run_id, 'done')
+
+    print(f'\n{len(ARTIFACTS) - failures} of {len(ARTIFACTS)} schemas accepted')
+    return 0 if failures == 0 else 1
+
+
+COMMANDS = {'run': _run, 'cost': _cost, 'roster': _roster, 'check': _check}
 
 COMMAND_DESCRIPTIONS = {
     'run': 'take one company through the full route and write the note',
     'cost': 'show what recent runs spent, by agent',
     'roster': 'list the agents and which model tier each runs on',
+    'check': 'verify each artifact schema is accepted by the model that will receive it',
 }
 
 

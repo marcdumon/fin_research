@@ -33,6 +33,9 @@ log = logging.getLogger(__name__)
 # context entirely, so something has to give; losing the tail of one section is better than losing the run.
 DEFAULT_MAX_INPUT_TOKENS = 100_000
 
+# Enough for a set of findings. Agents producing a valuation or a whole report override it upward.
+DEFAULT_MAX_OUTPUT_TOKENS = 4_096
+
 
 @dataclass
 class RunContext:
@@ -121,6 +124,9 @@ class Analyst:
     system_prompt: str = ''
     schema: type[BaseModel] = FindingSet
     max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS
+    # Room for the reply. A truncated response is not a refusal -- it is valid JSON up to the cut, which then
+    # fails to parse and is retried at full price. The agents producing the largest artifacts need the most.
+    max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
 
     def build_prompt(self, ctx: RunContext, limit: int, **inputs: object) -> str:
         """Compose the user prompt, fitting sources into `limit` tokens.
@@ -155,7 +161,8 @@ class Analyst:
         limit = min(self.max_input_tokens, choice.max_source_tokens)
 
         request = ModelRequest(agent=self.name, system=self.system_prompt,
-                               user=self.build_prompt(ctx, limit, **inputs), schema=self.schema)
+                               user=self.build_prompt(ctx, limit, **inputs), schema=self.schema,
+                               max_tokens=self.max_output_tokens)
         result = await ctx.client.call(request, task_id=task_id)
 
         if result.parsed is None:

@@ -99,6 +99,7 @@ uv run python -m fin_research.monitor alerts
 
 # Research. This is the part that costs money.
 uv run python -m fin_research.agents roster
+uv run python -m fin_research.agents check          # do the models accept our schemas? costs a cent
 uv run python -m fin_research.agents run --ticker AAPL --budget 2.00
 uv run python -m fin_research.agents run --ticker AAPL --budget 2.00 --gate expensive
 uv run python -m fin_research.agents cost

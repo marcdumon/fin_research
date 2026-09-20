@@ -26,6 +26,8 @@ class ValuationAnalyst(Analyst):
     stage: int = 5
     output_type: str = 'Valuation'
     schema: type = Valuation
+    # Twelve assumptions, each with a rationale, plus three scenarios. The default cut this off mid-object.
+    max_output_tokens: int = 8_192
 
     def build_prompt(self, ctx: RunContext, limit: int, **inputs: object) -> str:
         """Compose a prompt demanding scenarios and explicit assumptions, not a point estimate."""
@@ -58,6 +60,9 @@ class Synthesiser(Analyst):
     stage: int = 6
     output_type: str = 'Report'
     schema: type = Report
+    # The longest artifact the system produces: a thesis, two sets of claims with their evidence, the
+    # disagreements and the falsifiers.
+    max_output_tokens: int = 12_288
 
     def build_prompt(self, ctx: RunContext, limit: int, **inputs: object) -> str:
         """Compose the final prompt from the verified findings, both theses and the valuation."""
