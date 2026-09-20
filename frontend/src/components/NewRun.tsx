@@ -55,6 +55,9 @@ export function NewRun({ onStarted }: { onStarted: (runId: string) => void }) {
       >
         {busy ? 'Starting' : 'Research this company'}
       </button>
+      <p className="text-[12px] text-muted">
+        A company that has not been read before is fetched first, which adds a minute.
+      </p>
       {error ? <p className="text-[12.5px] text-expensive">{error}</p> : null}
     </form>
   )

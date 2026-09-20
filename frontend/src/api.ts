@@ -139,3 +139,16 @@ export async function startRun(ticker: string, budgetUsd: number, gateTiers: str
   if (!response.ok) throw new Error((await response.json()).detail ?? 'could not start the run')
   return (await response.json()).run_id
 }
+
+export interface SchemaCheck {
+  schema: string
+  model: string
+  accepted: boolean
+  detail: string
+}
+
+export async function checkSchemas(): Promise<SchemaCheck[]> {
+  const response = await fetch('/api/schema-check', { method: 'POST' })
+  if (!response.ok) throw new Error('the check could not run')
+  return response.json() as Promise<SchemaCheck[]>
+}

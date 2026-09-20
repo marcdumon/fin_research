@@ -292,8 +292,13 @@ class Preparation:
     facts: FactIndex | None = None
 
 
-def prepare(cfg, state: State, ticker: str, as_of: date, budget_usd: float) -> Preparation:
-    """Open a run and load everything it will read, without calling a model.
+def prepare(cfg, state: State, ticker: str, as_of: date, budget_usd: float,
+            run_id: str | None = None) -> Preparation:
+    """Load everything a run will read, without calling a model.
+
+    Opens a run when not given one. A caller that has to fetch filings first opens it beforehand instead, so
+    the run is visible while that happens -- otherwise a browser waiting on the run id sees nothing for a
+    minute and concludes the request failed.
 
     Returns the pieces rather than a half-built context. An earlier version handed back a `RunContext` with
     no client attached and relied on the caller to fill it in, which is a shape that type checks only because
@@ -306,5 +311,6 @@ def prepare(cfg, state: State, ticker: str, as_of: date, budget_usd: float) -> P
         if cfg.investalyze_db and store_module.attach_market_data(con, cfg.investalyze_db):
             price = latest_price(con, ticker, as_of)
 
-    run_id = state.start_run(ticker, None, as_of, budget_usd, {'agents': cfg.llm.agents})
+    if run_id is None:
+        run_id = state.start_run(ticker, None, as_of, budget_usd, {'agents': cfg.llm.agents})
     return Preparation(run_id=run_id, sources=sources, price=price, facts=facts)

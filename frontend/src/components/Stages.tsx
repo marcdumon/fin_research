@@ -8,6 +8,7 @@ function elapsed(startedAt: string): string {
 // Numbered because the route genuinely is a sequence: readers first, then the statements, then a debate that
 // only makes sense in order, then the write-up. Not numbered for decoration.
 const STAGE_NAMES: Record<number, string> = {
+  0: 'Fetch the filings',
   1: 'Read the filing',
   2: 'Read the statements',
   3: 'Argue the constructive case',

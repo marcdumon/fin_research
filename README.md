@@ -78,7 +78,8 @@ no convergence loop.
 uv sync
 cp .env.example .env          # add OPENROUTER_API_KEY
 
-# Fetch and normalise. No model involved, so this is free and cacheable.
+# Fetch and normalise. No model involved, so this is free and cacheable. A research run does this
+# for itself when a company has not been read before, so it is only needed to prepare ahead of time.
 uv run python -m fin_research.ingest init
 uv run python -m fin_research.ingest ingest --ticker AAPL --years 5 --statements --news
 uv run python -m fin_research.ingest verify --ticker AAPL      # do its statements reconcile?

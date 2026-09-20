@@ -12,7 +12,7 @@ written down here because it stops holding the moment anyone exposes the port.
 import asyncio
 import logging
 import sys
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 import duckdb
@@ -223,6 +223,42 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         return {'run_id': None, 'ticker': ticker, 'pid': process.pid, 'log': str(log_file),
                 'note': 'started, but it has not registered yet'}
+
+    @app.post('/api/schema-check')
+    async def schema_check() -> list[dict]:
+        """Send each artifact schema to the model that will receive it, and report what is accepted.
+
+        A provider rejecting a schema otherwise surfaces as a 400 partway through a run, after the cheap
+        stages have been paid for.
+        """
+        from fin_research.agents import AGENTS
+        from fin_research.core.schemas import ARTIFACTS
+        from fin_research.llm.client import ModelClient, ModelRequest
+
+        owners: dict[str, str] = {}
+        for name, agent in AGENTS.items():
+            owners.setdefault(agent.output_type, name)
+
+        results = []
+        with state() as store:
+            run_id = store.start_run('schema-check', None, date.today(), 0.5, {'check': True})
+            async with ModelClient(cfg=settings, state=store, run_id=run_id) as client:
+                for artifact_type, schema in ARTIFACTS.items():
+                    agent = owners.get(artifact_type)
+                    if agent is None:
+                        continue
+                    request = ModelRequest(agent=agent, system='Reply with the requested structure.',
+                                           user='Produce a minimal valid example.', schema=schema,
+                                           max_tokens=2000)
+                    try:
+                        await client.call(request)
+                        results.append({'schema': artifact_type, 'model': settings.llm.model_for(agent),
+                                        'accepted': True, 'detail': ''})
+                    except Exception as error:
+                        results.append({'schema': artifact_type, 'model': settings.llm.model_for(agent),
+                                        'accepted': False, 'detail': str(error)[:200]})
+            store.finish_run(run_id, 'done')
+        return results
 
     @app.get('/api/agents')
     def list_agents() -> list[dict]:

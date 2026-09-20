@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { decide, isRunning, listAlerts, listRuns, money, type MonitorAlert, type Run } from './api'
 import { Alerts } from './components/Alerts'
 import { CallTape } from './components/CallTape'
+import { ModelCheck } from './components/ModelCheck'
 import { NewRun } from './components/NewRun'
 import { SpendTape } from './components/SpendTape'
 import { Stages } from './components/Stages'
@@ -41,6 +42,7 @@ function RunRail({ runs, selected, onSelect, view, onView, alertCount, onStarted
       </div>
 
       <NewRun onStarted={onStarted} />
+      <ModelCheck />
       {/* Capped on narrow screens so a long history does not push the run itself below the fold. */}
       <ul className="max-h-64 overflow-y-auto lg:max-h-none lg:overflow-visible">
         {runs.map((run) => {

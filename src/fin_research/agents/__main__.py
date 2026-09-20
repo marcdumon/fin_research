@@ -20,6 +20,7 @@ from fin_research.agents.base import AGENT_DESCRIPTIONS, RunContext
 from fin_research.config import read
 from fin_research.core.state import State
 from fin_research.core.supervisor import prepare, run_deep_dive
+from fin_research.ingest.pipeline import ingest_company, is_prepared
 from fin_research.llm.client import ModelClient
 from fin_research.logging import configure_logging
 from fin_research.report.render import render
@@ -40,11 +41,27 @@ async def _run(args: argparse.Namespace) -> int:
               f'within {cfg.llm.gate_timeout_seconds:.0f}s per step.')
 
     with State(cfg.state_path) as state:
-        prepared = prepare(cfg, state, args.ticker, as_of, args.budget)
+        # The run is opened before anything slow happens, so it is visible while its filings are fetched.
+        run_id = state.start_run(args.ticker, None, as_of, args.budget, {'agents': cfg.llm.agents})
+
+        if not is_prepared(cfg, args.ticker):
+            # Fetching is free and cached, so a run prepares its own inputs rather than failing and telling
+            # someone to go and run another command first.
+            task_id = state.start_task(run_id, 'fetch filings', 0, args.ticker)
+            log.info(f'{args.ticker} has nothing stored; fetching its filings first')
+            try:
+                await ingest_company(cfg, args.ticker)
+                state.finish_task(task_id, 'done')
+            except Exception as error:
+                state.finish_task(task_id, 'failed', str(error))
+                state.finish_run(run_id, 'failed', f'could not fetch filings: {error}')
+                print(f'could not fetch filings for {args.ticker}: {type(error).__name__}: {error}')
+                return 1
+
+        prepared = prepare(cfg, state, args.ticker, as_of, args.budget, run_id=run_id)
         if prepared.sources.is_empty:
-            print(f'nothing stored for {args.ticker}. Run: '
-                  f'python -m fin_research.ingest ingest --ticker {args.ticker} --statements --news')
-            state.finish_run(prepared.run_id, 'failed', 'no sources')
+            print(f'{args.ticker} has filings but no readable sections as of {as_of}')
+            state.finish_run(prepared.run_id, 'failed', 'no readable sections')
             return 1
 
         log.info(f'{args.ticker}: run {prepared.run_id}, budget ${args.budget:.2f}, '

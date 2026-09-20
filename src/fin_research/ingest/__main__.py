@@ -8,7 +8,6 @@ is what makes the rest of the system debuggable.
 import argparse
 import asyncio
 import logging
-from datetime import date, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,12 +16,12 @@ from fin_research import paths
 from fin_research.config import read
 from fin_research.core.evaluation import score
 from fin_research.ingest import store as store_module
-from fin_research.ingest.documents import fetch_primary, fetch_report, rendered_reports
+from fin_research.ingest.documents import fetch_primary
 from fin_research.ingest.edgar import ANNUAL_FORMS, EdgarClient
 from fin_research.ingest.facts import as_of, fetch_facts, periods
 from fin_research.ingest.identities import Status, check_filer
-from fin_research.ingest.news import events, press_release
-from fin_research.ingest.sections import REQUIRED_ITEMS, split
+from fin_research.ingest.pipeline import ingest_company
+from fin_research.ingest.sections import split
 from fin_research.logging import configure_logging
 
 log = logging.getLogger('fin_research.ingest')
@@ -47,47 +46,9 @@ async def _init(args: argparse.Namespace) -> int:
 async def _ingest(args: argparse.Namespace) -> int:
     """Fetch, split and normalise everything needed to analyse one company."""
     cfg = read(args.config)
-    since = date.today() - timedelta(days=365 * args.years)
-
-    async with EdgarClient(cfg) as client:
-        cik = await client.resolve_filer(args.ticker)
-        annual = await client.filings(cik, forms=ANNUAL_FORMS, since=since)
-        log.info(f'{args.ticker}: CIK {cik}, {len(annual)} annual report(s) since {since}')
-
-        with store_module.connect(cfg) as con:
-            store_module.store_filings(con, annual, args.ticker)
-
-            for filing in annual:
-                document = await fetch_primary(client, filing)
-                document_id = store_module.store_document(con, filing, filing.primary_document, 'primary', document)
-                result = split(document, form=filing.form)
-                store_module.store_sections(con, document_id, filing.accession, result)
-                missing = [i for i in REQUIRED_ITEMS if result.by_item(i) is None]
-                log.info(f'  {filing.form} {filing.filed}: {len(result.sections)} sections, '
-                         f'confidence {result.confidence:.2f}' + (f', missing {missing}' if missing else ''))
-
-                if args.statements:
-                    for report in await rendered_reports(client, filing):
-                        page = await fetch_report(client, filing, report)
-                        store_module.store_document(con, filing, report.html_file, report.category.lower(), page)
-
-            if args.news:
-                recent = await events(client, cik, since=since, material_only=True)
-                store_module.store_filings(con, [e.filing for e in recent], args.ticker)
-                for event in recent:
-                    release = await press_release(client, event.filing)
-                    if release is not None:
-                        store_module.store_document(con, event.filing, 'press-release', 'press_release', release)
-                log.info(f'  {len(recent)} material event(s)')
-
-            facts = await fetch_facts(client, cik)
-            store_module.store_facts(con, facts, args.ticker)
-
-            print(f'{args.ticker}: stored '
-                  f'{store_module.count_rows(con, "filings"):,} filings, '
-                  f'{store_module.count_rows(con, "documents"):,} documents, '
-                  f'{store_module.count_rows(con, "sections"):,} sections, '
-                  f'{store_module.count_rows(con, "facts"):,} facts')
+    counts = await ingest_company(cfg, args.ticker, years=args.years,
+                                  statements=args.statements, news=args.news)
+    print(f'{args.ticker}: stored ' + ', '.join(f'{count:,} {table}' for table, count in counts.items()))
     return 0
 
 
