@@ -1,0 +1,7 @@
+line-length = 135
+
+[lint]
+select = ['E', 'F', 'I', 'B', 'UP', 'SIM', 'PD', 'RUF']
+
+[format]
+quote-style = 'single'

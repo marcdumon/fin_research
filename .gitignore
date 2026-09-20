@@ -1,0 +1,16 @@
+# MD> Most gitignore settings are in ~/.gitignore_global
+.venv/
+.pytest_cache/
+
+# Ingested filings, the DuckDB store and the run ledger: all regenerable, and large.
+data/
+*.duckdb
+*.sqlite
+
+# Generated research notes.
+reports/
+
+# The real key. The example is tracked on purpose -- the global ignore's `.env.*` would otherwise hide the
+# template the README tells you to copy.
+.env
+!.env.example

@@ -1,0 +1,47 @@
+# MD> Non-secret settings only. The OpenRouter API key comes from the environment (.env), NOT here.
+
+data_root = 'data'
+db = 'fin_research.duckdb'
+state_db = 'state.sqlite'
+log_level = 'INFO'
+
+[edgar]
+# SEC blocks clients that do not declare a contact address, and rate-limits to 10 req/s.
+user_agent = 'fin_research 7793950+marcdumon@users.noreply.github.com'
+rate_limit_seconds = 0.11
+cache_ttl_days = 7
+
+[investalyze]
+# Attached READ_ONLY for prices/fundamentals. Must be a DuckDB >=1.5.4 file; format is version-sensitive.
+db_path = '/mnt/Dev/active_python_projects/investalyze/data/investalyze.duckdb'
+
+[llm]
+base_url = 'https://openrouter.ai/api/v1'
+max_concurrency = 8
+default_budget_usd = 2.0
+
+[llm.tiers]
+# Verify these model ids against OpenRouter at build time; ids and prices churn.
+cheap = 'deepseek/deepseek-chat'
+mid = 'deepseek/deepseek-r1'
+expensive = 'anthropic/claude-sonnet-5'
+
+[llm.prices]
+# MD> Dollars per million tokens, plus the model's context window. Verified against openrouter.ai/api/v1/models.
+# The context figure decides where a long filing is truncated, and it differs hugely between adjacent tiers.
+'deepseek/deepseek-chat'    = { input = 0.32, output = 0.89, context = 163840 }
+'deepseek/deepseek-r1'      = { input = 0.70, output = 2.50, context = 64000 }
+'anthropic/claude-sonnet-5' = { input = 2.00, output = 10.00, context = 1000000 }
+
+[llm.agents]
+# MD> Tier follows how CHECKABLE an agent's output is, not how hard its task feels. An agent whose every
+# claim must quote the filing gets a cheap model, because code catches its mistakes.
+business        = 'cheap'
+risk_factors    = 'cheap'
+management_view = 'cheap'
+events          = 'cheap'
+financials      = 'mid'
+bull            = 'mid'
+bear            = 'mid'
+valuation       = 'expensive'
+synthesis       = 'expensive'

@@ -1,0 +1,93 @@
+# fin_research
+
+An agent swarm that reads SEC filings and writes equity research, where every factual claim is traceable to a
+quotation that has been mechanically verified against the source.
+
+Most of the work is done by cheap models. That is possible because of one rule: **an agent's model tier
+follows how checkable its output is, not how hard its task feels.** Pulling risk factors out of a 10-K feels
+harder than writing an investment thesis, but each of its claims must quote the filing and each quote is
+checked by code, so a cheap model's mistakes are caught. Writing a thesis is easy to do badly and impossible
+to check, so that goes to an expensive model. Reading a full annual report costs about **$0.02** on the cheap
+tier against **$0.13** on the expensive one — prices and context windows verified against
+`openrouter.ai/api/v1/models`, and carried in `fin_research.toml` so they can be corrected as they move.
+
+## What it does
+
+```
+ticker -> filings -> sections -> evidence -> findings -> debate -> report
+                  \-> XBRL facts -> reconciled statements -/
+```
+
+Nine agents across six stages. Four read the filing in parallel, one reads the reconciled statements, then a
+bull and a bear argue from the same evidence for exactly three turns, a valuation is produced, and a
+synthesiser writes the note and rules on what the debate left unsettled.
+
+Agents never talk to each other. They emit typed artifacts and a supervisor routes them. The single exception
+is the debate, which is where genuine disagreement is worth paying for — and it is fixed at three calls, with
+no convergence loop.
+
+## The guarantees
+
+- **A fabricated citation cannot reach the report.** Agents quote; they never supply offsets, because models
+  cannot count characters. The verifier locates each quote in the canonical text and assigns the offsets
+  itself. A quote that is not found is discarded along with the claim it supported.
+- **Numbers are checked against the filer's own arithmetic.** Assets must equal liabilities plus equity; the
+  cash flow sections plus currency effects must equal the change in cash. Checks are three-valued — pass,
+  fail, or skipped naming what was missing — because a check that silently skips reports a success it did not
+  earn.
+- **Spend is refused, not just reported.** The budget is checked before a request is sent. Every call is
+  recorded, including failures.
+- **Point in time.** Every document and fact carries its filing date, so a run dated 2023 reads only what was
+  public in 2023.
+
+## Use
+
+```bash
+uv sync
+cp .env.example .env          # add OPENROUTER_API_KEY
+
+# Fetch and normalise. No model involved, so this is free and cacheable.
+uv run python -m fin_research.ingest init
+uv run python -m fin_research.ingest ingest --ticker AAPL --years 5 --statements --news
+uv run python -m fin_research.ingest verify --ticker AAPL      # do its statements reconcile?
+uv run python -m fin_research.ingest score --tickers AAPL JPM  # regression gate, no model needed
+
+# Research. This is the part that costs money.
+uv run python -m fin_research.agents roster
+uv run python -m fin_research.agents run --ticker AAPL --budget 2.00
+uv run python -m fin_research.agents cost
+```
+
+## Layout
+
+| Package | What it does |
+|---|---|
+| `ingest/` | EDGAR client, HTML to canonical text, 10-K section splitting, XBRL normalisation, 8-K events, DuckDB store |
+| `core/` | typed artifacts, citation verification, SQLite run state, the supervisor, evaluation |
+| `llm/` | the single `call_model` path, tier routing, structured-output parsing |
+| `agents/` | the nine agents and their prompts |
+| `report/` | markdown rendering with a numbered source appendix |
+
+Prices and fundamentals are not duplicated here: the `investalyze` database is attached read-only.
+
+## Where it stands
+
+Verified on real filings: section splitting on **72 filings** across 6 filers and 12 years with no failures;
+accounting identities at **363 of 364** checks across 22 filers. **174 tests**, none of which touch a network
+or a provider.
+
+**Nothing here has yet made a real model call.** The verification, budgeting and parsing are exercised against
+recorded fakes, which tests this code against a model of how providers behave. The first real run is a
+discovery step, not a confirmation one.
+
+Known limits, all flagged in code rather than hidden:
+
+- **Banks satisfy Item 7 and Item 8 with pointers.** One large bank's MD&A "appears on pages 46-160" under no
+  item heading at all. Statements are covered via the rendered pages; its MD&A is not.
+- **10-Q is refused.** Quarterly filings number items separately per part, so ordering cannot disambiguate
+  them; the splitter declines rather than guessing.
+- **Reorganised tickers raise.** One major oil company's ticker currently resolves to a registrant with no
+  annual reports at all; pass the predecessor CIK explicitly.
+- **A large bank's filing exceeds a cheap model's context** at roughly 290k tokens. Sections are truncated
+  with a marker rather than silently.
+- Verification confirms that a source says what is claimed. It does not confirm the claim is correct.
