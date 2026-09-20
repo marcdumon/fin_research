@@ -152,3 +152,70 @@ export async function checkSchemas(): Promise<SchemaCheck[]> {
   if (!response.ok) throw new Error('the check could not run')
   return response.json() as Promise<SchemaCheck[]>
 }
+
+export interface Screen {
+  name: string
+  description: string
+  requires: string[]
+  excludes: string[]
+  top: number
+  notes: string
+}
+
+export interface Survivor {
+  Ticker: string
+  name: string | null
+  sector: string | null
+  market_cap: number | null
+  earnings_yield: number | null
+  fcf_yield: number | null
+  roe: number | null
+  gross_margin: number | null
+  revenue_growth: number | null
+  momentum: number | null
+  score: number | null
+}
+
+export interface ScreenResult {
+  screen: string
+  as_of: string
+  considered: number
+  dropped: Record<string, number>
+  survivors: Survivor[]
+}
+
+export interface VerifyResult {
+  ticker: string
+  trustworthy: boolean
+  passed: number
+  failed: number
+  skipped: number
+  results: { name: string; period_end: string; status: string; detail: string }[]
+}
+
+export const listScreens = () => get<Screen[]>('/api/screens')
+export const getWatchlist = () => get<string[]>('/api/monitor/watchlist')
+export const verifyStatements = (ticker: string) => get<VerifyResult>(`/api/verify/${ticker}?periods=4`)
+
+async function post<T>(path: string, body?: unknown): Promise<T> {
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  if (!response.ok) throw new Error(`${response.status} from ${path}`)
+  return response.json() as Promise<T>
+}
+
+export const runScreen = (name: string) => post<ScreenResult>(`/api/screens/${name}/run`)
+export const startPatrol = (tickers: string[] = []) => post<{ pid: number }>('/api/monitor/patrol', { tickers })
+export const startFunnel = (screen: string, budgetUsd: number, limit: number) =>
+  post<{ pid: number }>('/api/screens/funnel', { screen, budget_usd: budgetUsd, limit })
+
+export function percent(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `${(value * 100).toFixed(1)}%`
+}
+
+export function billions(value: number | null | undefined): string {
+  return value === null || value === undefined ? '—' : `${(value / 1e9).toFixed(2)}`
+}

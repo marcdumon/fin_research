@@ -74,6 +74,16 @@ no convergence loop.
 
 ## Use
 
+Everything is reachable from the dashboard: start a run, screen a universe, read the survivors, check the
+watchlist, verify a company's accounts, and answer approval gates. The command line does the same things and
+is useful for scripting, but nothing requires it.
+
+```bash
+uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
+```
+
+### From a terminal
+
 ```bash
 uv sync
 cp .env.example .env          # add OPENROUTER_API_KEY

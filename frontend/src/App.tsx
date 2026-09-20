@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react'
-import { decide, isRunning, listAlerts, listRuns, money, type MonitorAlert, type Run } from './api'
+import {
+  decide, isRunning, listAlerts, listRuns, money, startPatrol, startRun,
+  type MonitorAlert, type Run,
+} from './api'
 import { Alerts } from './components/Alerts'
 import { CallTape } from './components/CallTape'
 import { ModelCheck } from './components/ModelCheck'
 import { NewRun } from './components/NewRun'
+import { Screens } from './components/Screens'
 import { SpendTape } from './components/SpendTape'
 import { Stages } from './components/Stages'
+import { Verify } from './components/Verify'
 import { useRunStream } from './useRunStream'
+
+type View = 'runs' | 'screens' | 'alerts'
 
 const STATUS_WORDING: Record<string, string> = {
   running: 'Working',
@@ -20,23 +27,24 @@ function RunRail({ runs, selected, onSelect, view, onView, alertCount, onStarted
   runs: Run[]
   selected: string | null
   onSelect: (id: string) => void
-  view: 'runs' | 'alerts'
-  onView: (view: 'runs' | 'alerts') => void
+  view: View
+  onView: (view: View) => void
   alertCount: number
   onStarted: (runId: string) => void
 }) {
   return (
     <nav aria-label="Runs" className="lg:w-64 lg:shrink-0 lg:border-r border-rule lg:h-dvh lg:overflow-y-auto">
       <div className="flex border-b border-rule">
-        {(['runs', 'alerts'] as const).map((name) => (
+        {(['runs', 'screens', 'alerts'] as const).map((name) => (
           <button
             key={name}
             onClick={() => onView(name)}
             aria-current={view === name ? 'page' : undefined}
-            className={`flex-1 px-4 py-3.5 text-[14px] text-left border-r border-rule last:border-r-0
+            className={`flex-1 px-3 py-3.5 text-[13.5px] text-left border-r border-rule last:border-r-0
               ${view === name ? 'font-semibold bg-surface' : 'text-muted hover:text-ink'}`}
           >
-            {name === 'runs' ? 'Runs' : `Changes${alertCount ? ` (${alertCount})` : ''}`}
+            {name === 'runs' ? 'Runs' : name === 'screens' ? 'Screens'
+              : `Changes${alertCount ? ` (${alertCount})` : ''}`}
           </button>
         ))}
       </div>
@@ -77,7 +85,7 @@ function RunRail({ runs, selected, onSelect, view, onView, alertCount, onStarted
 export default function App() {
   const [runs, setRuns] = useState<Run[]>([])
   const [selected, setSelected] = useState<string | null>(null)
-  const [view, setView] = useState<'runs' | 'alerts'>('runs')
+  const [view, setView] = useState<View>('runs')
   const [alerts, setAlerts] = useState<MonitorAlert[]>([])
   const { snapshot, calls, approvals, live, justLanded, resolveApproval } = useRunStream(selected)
 
@@ -115,8 +123,18 @@ export default function App() {
       />
 
       <main className="flex-1 min-w-0 px-4 sm:px-8 py-6 lg:h-dvh lg:overflow-y-auto">
-        {view === 'alerts' ? (
-          <Alerts alerts={alerts} onAcknowledged={refreshAlerts} />
+        {view === 'screens' ? (
+          <Screens onResearch={async (ticker) => {
+            const runId = await startRun(ticker, 2, ['expensive'])
+            void refreshRuns()
+            if (runId) setSelected(runId)
+            setView('runs')
+          }} />
+        ) : view === 'alerts' ? (
+          <Alerts alerts={alerts} onAcknowledged={refreshAlerts} onPatrol={async () => {
+            await startPatrol()
+            setTimeout(refreshAlerts, 4000)
+          }} />
         ) : !snapshot ? (
           <p className="text-muted">
             {runs.length ? 'Loading the run.' : 'No runs yet. Start one from the command line.'}
@@ -163,6 +181,11 @@ export default function App() {
             <section aria-label="Route">
               <h3 className="text-[15px] font-medium mb-2">What each agent did</h3>
               <Stages tasks={snapshot.tasks} />
+            </section>
+
+            <section aria-label="Do the accounts add up">
+              <h3 className="text-[15px] font-medium mb-2">Can these numbers be trusted?</h3>
+              <Verify ticker={snapshot.ticker} />
             </section>
 
             <section aria-label="Model calls">

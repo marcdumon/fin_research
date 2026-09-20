@@ -11,6 +11,7 @@ written down here because it stops holding the moment anyone exposes the port.
 
 import asyncio
 import logging
+import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -30,6 +31,9 @@ from fin_research.web.events import run_snapshot, stream
 log = logging.getLogger(__name__)
 
 FRONTEND = Path(__file__).parent / 'static'
+
+# Runs the system makes about itself rather than about a company.
+DIAGNOSTIC_RUN = 'schema-check'
 
 
 class _NoCacheIndex(StaticFiles):
@@ -54,6 +58,20 @@ class Decision(BaseModel):
 
     approved: bool
     note: str | None = None
+
+
+class Patrol(BaseModel):
+    """A request to check the watchlist for change."""
+
+    tickers: list[str] = []
+
+
+class Funnel(BaseModel):
+    """A request to screen, then read the survivors."""
+
+    screen: str
+    budget_usd: float = 1.0
+    limit: int = 20
 
 
 class Launch(BaseModel):
@@ -90,10 +108,13 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         """
         with state() as store:
             store.reconcile()
+            # Diagnostic runs are excluded. They are real rows with real costs, but listing them beside
+            # research pushes the work someone is actually watching off the screen.
             return [dict(row) for row in store.query(
                 'SELECT r.run_id, r.ticker, r.status, r.as_of, r.budget_usd, r.spend_usd, r.started_at, '
                 'r.finished_at, (SELECT count(*) FROM llm_calls c WHERE c.run_id = r.run_id) AS calls '
-                'FROM runs r ORDER BY r.started_at DESC LIMIT ?', (limit,))]
+                'FROM runs r WHERE r.ticker NOT IN (?) ORDER BY r.started_at DESC LIMIT ?',
+                (DIAGNOSTIC_RUN, limit))]
 
     @app.get('/api/runs/{run_id}')
     def get_run(run_id: str) -> dict:
@@ -241,7 +262,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
         results = []
         with state() as store:
-            run_id = store.start_run('schema-check', None, date.today(), 0.5, {'check': True})
+            run_id = store.start_run(DIAGNOSTIC_RUN, None, date.today(), 0.5, {'check': True})
             async with ModelClient(cfg=settings, state=store, run_id=run_id) as client:
                 for artifact_type, schema in ARTIFACTS.items():
                     agent = owners.get(artifact_type)
@@ -259,6 +280,116 @@ def create_app(cfg: Config | None = None) -> FastAPI:
                                         'accepted': False, 'detail': str(error)[:200]})
             store.finish_run(run_id, 'done')
         return results
+
+    def _spawn(command: list[str], name: str) -> dict:
+        """Start a background command and keep its output.
+
+        Screening and patrolling are quick enough to answer inline; the funnel and a patrol over a long
+        watchlist are not, and holding the request open for minutes gives the browser nothing to show in the
+        meantime.
+        """
+        logs = settings.data_root / 'runs'
+        logs.mkdir(parents=True, exist_ok=True)
+        log_file = logs / f'{name}-{datetime.now().strftime("%Y%m%d-%H%M%S")}.log'
+        handle = log_file.open('w')
+        process = subprocess.Popen([sys.executable, '-m', *command], cwd=paths.PROJECT_ROOT,
+                                   stdout=handle, stderr=subprocess.STDOUT)
+        return {'pid': process.pid, 'log': str(log_file)}
+
+    @app.get('/api/screens')
+    def list_screens() -> list[dict]:
+        """The screens that are defined, and what each one requires."""
+        from fin_research.screen import rules
+
+        path = paths.PROJECT_ROOT / 'screens.toml'
+        if not path.exists():
+            return []
+        return [{'name': screen.name, 'description': screen.description,
+                 'requires': [c.describe() for c in screen.require],
+                 'excludes': list(screen.exclude_sectors), 'top': screen.top,
+                 'notes': screen.notes.strip()}
+                for screen in rules.load(path).values()]
+
+    @app.post('/api/screens/{name}/run')
+    def run_screen(name: str, as_of: str | None = None) -> dict:
+        """Run one screen and return the companies that survive it.
+
+        Answered inline: screening reads no filings and calls no model, so it completes in about a second
+        over a couple of thousand companies.
+        """
+        from fin_research.screen import factors, rules
+
+        screens = rules.load(paths.PROJECT_ROOT / 'screens.toml')
+        if name not in screens:
+            raise HTTPException(404, f'no screen named {name!r}')
+
+        when = date.fromisoformat(as_of) if as_of else date.today()
+        con = store_module.connect(settings, read_only=True)
+        try:
+            if not settings.investalyze_db or not store_module.attach_market_data(con, settings.investalyze_db):
+                raise HTTPException(503, 'screening needs the market database, which could not be attached')
+            table = factors.compute(con, when)
+        finally:
+            con.close()
+
+        result = rules.apply(screens[name], table)
+        columns = ['Ticker', 'name', 'sector', 'market_cap', 'earnings_yield', 'fcf_yield', 'roe',
+                   'gross_margin', 'revenue_growth', 'momentum', 'score']
+        present = [c for c in columns if c in result.survivors.columns]
+        survivors = result.survivors[present].where(result.survivors[present].notna(), None)
+
+        return {'screen': name, 'as_of': str(when), 'considered': result.considered,
+                'dropped': result.dropped, 'survivors': survivors.to_dict('records')}
+
+    @app.post('/api/screens/funnel')
+    def run_funnel(request: Funnel) -> dict:
+        """Screen, then read each survivor and decide which deserve a deep dive. This one spends money."""
+        return _spawn(['fin_research.screen', 'funnel', '--screen', request.screen,
+                       '--budget', str(request.budget_usd), '--limit', str(request.limit),
+                       '--log-level', 'INFO'], f'funnel-{request.screen}')
+
+    @app.post('/api/monitor/patrol')
+    def patrol(request: Patrol) -> dict:
+        """Check the watchlist for change. Calls no model."""
+        command = ['fin_research.monitor', 'patrol', '--log-level', 'INFO']
+        if request.tickers:
+            command += ['--tickers', *[t.upper() for t in request.tickers if t.isalnum()]]
+        return _spawn(command, 'patrol')
+
+    @app.get('/api/monitor/watchlist')
+    def get_watchlist() -> list[str]:
+        """Companies being patrolled."""
+        from fin_research.monitor.store import watchlist
+
+        with store_module.connect(settings, read_only=True) as con:
+            try:
+                return watchlist(con)
+            except duckdb.Error:
+                return []
+
+    @app.get('/api/verify/{ticker}')
+    async def verify_statements(ticker: str, periods: int = 5) -> dict:
+        """Whether a company's own reported statements reconcile.
+
+        This is what says a number can be trusted before anything reasons about it, so it belongs where the
+        numbers are read rather than behind a command.
+        """
+        from fin_research.ingest.edgar import EdgarClient
+        from fin_research.ingest.facts import as_of as facts_as_of
+        from fin_research.ingest.facts import fetch_facts
+        from fin_research.ingest.identities import check_filer
+
+        async with EdgarClient(settings) as client:
+            cik = await client.resolve_filer(ticker.upper())
+            facts = facts_as_of(await fetch_facts(client, cik))
+
+        report = check_filer(facts, limit=periods)
+        return {
+            'ticker': ticker.upper(), 'trustworthy': report.trustworthy,
+            'passed': report.passed, 'failed': len(report.failed), 'skipped': report.skipped,
+            'results': [{'name': r.name, 'period_end': str(r.period_end), 'status': r.status.value,
+                         'detail': r.detail} for r in report.results],
+        }
 
     @app.get('/api/agents')
     def list_agents() -> list[dict]:
