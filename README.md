@@ -64,7 +64,9 @@ no convergence loop.
 - **Spend is refused, not just reported.** The budget is checked before a request is sent. Every call is
   recorded, including failures.
 - **A human can stand in front of the expensive steps.** `--gate expensive` makes the run stop and wait for a
-  decision in the dashboard before each costly call. The pending request is a row in the database, so a run
+  decision in the dashboard before each costly call, offering three answers: run it, run it on the next tier
+  down, or skip it. The middle answer matters most — refusing the expensive model on the last stage of a run
+  discards every stage before it. The pending request is a row in the database, so a run
   interrupted while waiting can be resumed rather than stranded. Off by default: a gated run blocks until
   someone answers, which would silently stall an unattended job.
 - **Point in time.** Every document and fact carries its filing date, so a run dated 2023 reads only what was

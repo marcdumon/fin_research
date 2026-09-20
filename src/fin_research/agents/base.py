@@ -91,7 +91,7 @@ class Agent(Protocol):
     stage: int
     output_type: str
 
-    async def run(self, ctx: RunContext, **inputs: object) -> AgentResult:
+    async def run(self, ctx: RunContext, tier: str | None = None, **inputs: object) -> AgentResult:
         """Do this agent's work and return its typed output."""
         ...
 
@@ -153,16 +153,21 @@ class Analyst:
 
         return artifact, VerificationReport(verdicts=())
 
-    async def run(self, ctx: RunContext, task_id: str | None = None, **inputs: object) -> AgentResult:
-        """Build the prompt, call the model, parse it, and return only what survived checking."""
+    async def run(self, ctx: RunContext, task_id: str | None = None, tier: str | None = None,
+                  **inputs: object) -> AgentResult:
+        """Build the prompt, call the model, parse it, and return only what survived checking.
+
+        `tier` overrides the agent's configured one, which is how a decision taken at an approval gate to run
+        a step on something cheaper actually changes which model is used.
+        """
         # The window follows the model, not a constant: a reasoning model on the middle tier has a quarter
         # the context of the cheap model beside it, and a fixed limit would silently overflow it.
-        choice = resolve(ctx.cfg, self.name)
+        choice = resolve(ctx.cfg, self.name, tier)
         limit = min(self.max_input_tokens, choice.max_source_tokens)
 
         request = ModelRequest(agent=self.name, system=self.system_prompt,
                                user=self.build_prompt(ctx, limit, **inputs), schema=self.schema,
-                               max_tokens=self.max_output_tokens)
+                               max_tokens=self.max_output_tokens, tier=tier)
         result = await ctx.client.call(request, task_id=task_id)
 
         if result.parsed is None:

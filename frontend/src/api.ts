@@ -85,12 +85,19 @@ export const getRun = (id: string) => get<Snapshot>(`/api/runs/${id}`)
 export const getCalls = (id: string) => get<Call[]>(`/api/runs/${id}/calls`)
 export const listApprovals = (id: string) => get<Approval[]>(`/api/approvals?run_id=${id}`)
 
-export async function decide(approvalId: string, approved: boolean): Promise<void> {
+export type ApprovalDecision = 'approved' | 'downgraded' | 'rejected'
+
+export async function decide(approvalId: string, decision: ApprovalDecision): Promise<void> {
   await fetch(`/api/approvals/${approvalId}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ approved }),
+    body: JSON.stringify({ decision }),
   })
+}
+
+// The gate prompt names a cheaper model when one exists. Pulling it out lets the button say which.
+export function cheaperModel(prompt: string): string | null {
+  return prompt.match(/Cheaper: ([^\s(]+)/)?.[1] ?? null
 }
 
 export const isRunning = (status: string) => status === 'running'

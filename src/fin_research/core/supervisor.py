@@ -24,7 +24,7 @@ import duckdb
 from fin_research.agents import AGENTS
 from fin_research.agents.base import AgentResult, RunContext
 from fin_research.agents.debate import thesis_digest
-from fin_research.core.approvals import Rejected, gate
+from fin_research.core.approvals import DOWNGRADED, Rejected, gate
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 from fin_research.core.state import BudgetExceeded, State
 from fin_research.core.verification import FactIndex
@@ -162,12 +162,19 @@ class DeepDive:
 
 
 def _gate_prompt(ctx: RunContext, name: str) -> str:
-    """What the dashboard shows when asking whether to run an agent."""
+    """What the dashboard shows when asking whether to run an agent.
+
+    Names the cheaper model as well as the configured one, because the useful third answer at a gate is
+    neither yes nor no but "not at that price".
+    """
     choice = resolve(ctx.cfg, name)
     summary = ctx.state.run(ctx.run_id)
     spent = f'${summary.spend_usd:.4f} of ${summary.budget_usd:.2f}' if summary else 'unknown'
+
+    cheaper = ctx.cfg.llm.cheaper_tier(choice.tier)
+    alternative = f' Cheaper: {ctx.cfg.llm.tiers[cheaper]} ({cheaper}).' if cheaper else ''
     return (f'Run {name} for {ctx.ticker} on {choice.model} ({choice.tier})? '
-            f'Spent so far: {spent}.')
+            f'Spent so far: {spent}.{alternative}')
 
 
 async def _run_agent(name: str, ctx: RunContext, stage: int, semaphore: asyncio.Semaphore,
@@ -176,17 +183,23 @@ async def _run_agent(name: str, ctx: RunContext, stage: int, semaphore: asyncio.
     async with semaphore:
         task_id = ctx.state.start_task(ctx.run_id, name, stage)
 
+        tier: str | None = None
         if ctx.cfg.llm.needs_approval(name):
             try:
-                await gate(ctx.state, ctx.run_id, subject='agent', prompt=_gate_prompt(ctx, name),
-                           task_id=task_id, timeout=ctx.cfg.llm.gate_timeout_seconds)
+                decision = await gate(ctx.state, ctx.run_id, subject='agent',
+                                      prompt=_gate_prompt(ctx, name), task_id=task_id,
+                                      timeout=ctx.cfg.llm.gate_timeout_seconds)
             except Rejected as refusal:
                 log.info(f'{name} not run: {refusal}')
                 ctx.state.finish_task(task_id, 'skipped', str(refusal))
                 return None
 
+            if decision == DOWNGRADED:
+                tier = ctx.cfg.llm.cheaper_tier(resolve(ctx.cfg, name).tier)
+                log.info(f'{name}: running on the {tier} tier instead')
+
         try:
-            result = await AGENTS[name].run(ctx, task_id=task_id, **inputs)
+            result = await AGENTS[name].run(ctx, task_id=task_id, tier=tier, **inputs)
         except BudgetExceeded:
             ctx.state.finish_task(task_id, 'skipped', 'budget exhausted')
             raise

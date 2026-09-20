@@ -20,8 +20,13 @@ POLL_SECONDS = 1.0
 DEFAULT_TIMEOUT_SECONDS = 900.0
 
 APPROVED = 'approved'
+# Run the step, but on the next tier down. A step that is not worth its price is not necessarily worth
+# skipping: refusing the expensive model on the last stage of a run throws away everything before it.
+DOWNGRADED = 'downgraded'
 REJECTED = 'rejected'
 EXPIRED = 'expired'
+
+PROCEEDING = (APPROVED, DOWNGRADED)
 
 
 class Rejected(RuntimeError):
@@ -57,13 +62,14 @@ async def wait_for_decision(state: State, approval_id: str, *, timeout: float = 
 
 
 async def gate(state: State, run_id: str, *, subject: str, prompt: str, task_id: str | None = None,
-               timeout: float = DEFAULT_TIMEOUT_SECONDS) -> None:
-    """Ask for approval and wait, raising `Rejected` unless the answer is yes."""
+               timeout: float = DEFAULT_TIMEOUT_SECONDS) -> str:
+    """Ask for a decision and wait, returning it. Raises `Rejected` if the step is not to run at all."""
     approval_id = state.request_approval(run_id, subject, prompt, task_id)
-    log.info(f'waiting for approval: {prompt}')
+    log.info(f'waiting for a decision: {prompt}')
 
     answer = await wait_for_decision(state, approval_id, timeout=timeout)
-    if answer != APPROVED:
+    if answer not in PROCEEDING:
         raise Rejected(f'{prompt} -- {answer}')
 
-    log.info(f'approved: {prompt}')
+    log.info(f'{answer}: {prompt}')
+    return answer

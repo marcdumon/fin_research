@@ -26,6 +26,9 @@ _DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1'
 _DEFAULT_CONCURRENCY = 8
 _DEFAULT_BUDGET_USD = 2.0
 
+# Cheapest first. The ordering is what lets a gate offer a cheaper alternative rather than only a refusal.
+TIER_ORDER = ('cheap', 'mid', 'expensive')
+
 # Tier names are stable; the model behind a tier is expected to churn as prices move.
 _DEFAULT_TIERS = {
     'cheap': 'deepseek/deepseek-chat',
@@ -88,10 +91,24 @@ class LLMConfig:
     default_budget_usd: float = _DEFAULT_BUDGET_USD
     # Empty by default: a gated run waits for a human, and an unattended job would otherwise stall silently.
     gate_tiers: tuple[str, ...] = ()
-    gate_timeout_seconds: float = 900.0
+    # An hour. A gate that expires throws away everything the run has already paid for, and fifteen
+    # minutes is shorter than someone is away from the screen.
+    gate_timeout_seconds: float = 3600.0
     tiers: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_TIERS))
     agents: dict[str, str] = field(default_factory=lambda: dict(_DEFAULT_AGENT_TIERS))
     prices: dict[str, dict[str, float]] = field(default_factory=lambda: dict(_DEFAULT_PRICES))
+
+    def cheaper_tier(self, tier: str) -> str | None:
+        """The next tier down, or None if already the cheapest.
+
+        Tiers are ordered by what they cost, which is what makes "run this on something cheaper" a decision
+        someone can take at a gate rather than a configuration change made in advance.
+        """
+        order = [name for name in TIER_ORDER if name in self.tiers]
+        if tier not in order:
+            return None
+        position = order.index(tier)
+        return order[position - 1] if position > 0 else None
 
     def needs_approval(self, agent: str) -> bool:
         """True if a human must approve this agent before it runs."""
@@ -169,7 +186,7 @@ def read(path: Path | None = None) -> Config:
             max_concurrency=llm_raw.get('max_concurrency', _DEFAULT_CONCURRENCY),
             default_budget_usd=llm_raw.get('default_budget_usd', _DEFAULT_BUDGET_USD),
             gate_tiers=tuple(llm_raw.get('gate_tiers', ())),
-            gate_timeout_seconds=llm_raw.get('gate_timeout_seconds', 900.0),
+            gate_timeout_seconds=llm_raw.get('gate_timeout_seconds', 3600.0),
             tiers={**_DEFAULT_TIERS, **llm_raw.get('tiers', {})},
             agents={**_DEFAULT_AGENT_TIERS, **llm_raw.get('agents', {})},
             prices={**_DEFAULT_PRICES, **llm_raw.get('prices', {})},

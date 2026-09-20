@@ -15,6 +15,7 @@ import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+from typing import Literal
 
 import duckdb
 from fastapi import FastAPI, HTTPException
@@ -54,9 +55,13 @@ class _NoCacheIndex(StaticFiles):
 
 
 class Decision(BaseModel):
-    """A human's answer to an approval request."""
+    """A human's answer to an approval request.
 
-    approved: bool
+    A choice among outcomes rather than a boolean: refusing an expensive step on the last stage of a run
+    discards everything before it, so "run it on something cheaper" is usually the answer wanted.
+    """
+
+    decision: Literal['approved', 'downgraded', 'rejected'] = 'approved'
     note: str | None = None
 
 
@@ -167,10 +172,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
     @app.post('/api/approvals/{approval_id}')
     def decide(approval_id: str, decision: Decision) -> dict:
-        """Answer an approval request, releasing or stopping the step that is waiting on it."""
+        """Answer an approval request, releasing, downgrading or stopping the step waiting on it."""
         with state() as store:
-            store.decide_approval(approval_id, 'approved' if decision.approved else 'rejected', decision.note)
-        return {'approval_id': approval_id, 'status': 'approved' if decision.approved else 'rejected'}
+            store.decide_approval(approval_id, decision.decision, decision.note)
+        return {'approval_id': approval_id, 'status': decision.decision}
 
     @app.get('/api/reports/{ticker}')
     def get_report(ticker: str) -> FileResponse:

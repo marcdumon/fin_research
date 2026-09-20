@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import {
-  decide, isRunning, listAlerts, listRuns, money, startPatrol, startRun,
+  cheaperModel, decide, isRunning, listAlerts, listRuns, money, startPatrol, startRun,
   type MonitorAlert, type Run,
 } from './api'
 import { Alerts } from './components/Alerts'
@@ -159,19 +159,27 @@ export default function App() {
                 {approvals.map((approval) => (
                   <div key={approval.approval_id} className="flex items-baseline justify-between gap-4 flex-wrap">
                     <p className="text-[14px]">{approval.prompt}</p>
-                    <span className="flex gap-2">
-                      <button
-                        onClick={() => {
-                          void decide(approval.approval_id, true)
-                          resolveApproval(approval.approval_id)
-                        }}
-                        className="px-3 py-1 text-[13px] bg-ink text-surface">Approve</button>
-                      <button
-                        onClick={() => {
-                          void decide(approval.approval_id, false)
-                          resolveApproval(approval.approval_id)
-                        }}
-                        className="px-3 py-1 text-[13px] border border-rule">Stop here</button>
+                    <span className="flex gap-2 flex-wrap">
+                      {(
+                        [
+                          ['approved', 'Run it'],
+                          ['downgraded', cheaperModel(approval.prompt)
+                            ? `Use ${cheaperModel(approval.prompt)?.split('/').pop()}` : null],
+                          ['rejected', 'Skip it'],
+                        ] as const
+                      ).map(([choice, label]) => label ? (
+                        <button
+                          key={choice}
+                          onClick={() => {
+                            void decide(approval.approval_id, choice)
+                            resolveApproval(approval.approval_id)
+                          }}
+                          className={`px-3 py-1 text-[13px] ${
+                            choice === 'approved' ? 'bg-ink text-surface' : 'border border-rule'}`}
+                        >
+                          {label}
+                        </button>
+                      ) : null)}
                     </span>
                   </div>
                 ))}
