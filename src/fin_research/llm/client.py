@@ -80,6 +80,7 @@ class ModelResult:
     cache_hit: bool = False
     parse_mode: str = ParseMode.STRICT.value
     finish_reason: str | None = None
+    provider: str | None = None
 
 
 @dataclass
@@ -138,6 +139,8 @@ class ModelClient:
             'max_tokens': request.max_tokens,
             'usage': {'include': True},
         }
+        if self.cfg.llm.provider_sort:
+            body['provider'] = {'sort': self.cfg.llm.provider_sort}
         if request.schema is not None:
             body['response_format'] = {
                 'type': 'json_schema',
@@ -247,6 +250,8 @@ class ModelClient:
         """
         text, finish_reason = self._content(payload)
         usage = payload.get('usage') or {}
+        # Which backend actually served it. Without this a slow call is indistinguishable from a slow model.
+        provider = payload.get('provider')
         prompt_tokens = int(usage.get('prompt_tokens') or 0)
         completion_tokens = int(usage.get('completion_tokens') or 0)
 
@@ -270,12 +275,12 @@ class ModelClient:
             self.run_id, request.agent, choice.tier, choice.model, self.cache_key(choice, request),
             task_id=task_id, prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
             cost_usd=cost, latency_ms=latency_ms, retries=retries, cache_hit=cache_hit,
-            parse_mode=mode.value, finish_reason=finish_reason, error=error)
+            parse_mode=mode.value, finish_reason=finish_reason, error=error, provider=provider)
 
         return ModelResult(text=text, model=choice.model, call_id=call_id, parsed=parsed,
                            prompt_tokens=prompt_tokens, completion_tokens=completion_tokens,
                            cost_usd=cost, latency_ms=latency_ms, retries=retries, cache_hit=cache_hit,
-                           parse_mode=mode.value, finish_reason=finish_reason)
+                           parse_mode=mode.value, finish_reason=finish_reason, provider=provider)
 
 
 def response_payload(content: str, *, prompt_tokens: int = 100, completion_tokens: int = 50,

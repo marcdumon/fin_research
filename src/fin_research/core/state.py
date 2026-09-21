@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     agent             TEXT NOT NULL,
     tier              TEXT NOT NULL,
     model             TEXT NOT NULL,
+    provider          TEXT,
     prompt_sha256     TEXT NOT NULL,
     prompt_tokens     INTEGER,
     completion_tokens INTEGER,
@@ -188,10 +189,11 @@ class State:
         The tables are created with IF NOT EXISTS, so a column added later never appears in a database that
         already exists. Adding them here keeps a working installation working across an upgrade.
         """
-        existing = {row['name'] for row in self._con.execute('PRAGMA table_info(runs)')}
-        if 'pid' not in existing:
-            with self._con:
-                self._con.execute('ALTER TABLE runs ADD COLUMN pid INTEGER')
+        for table, column, kind in (('runs', 'pid', 'INTEGER'), ('llm_calls', 'provider', 'TEXT')):
+            existing = {row['name'] for row in self._con.execute(f'PRAGMA table_info({table})')}
+            if column not in existing:
+                with self._con:
+                    self._con.execute(f'ALTER TABLE {table} ADD COLUMN {column} {kind}')
 
     def close(self) -> None:
         """Close the underlying connection."""
@@ -295,7 +297,7 @@ class State:
                     completion_tokens: int | None = None, cost_usd: float = 0.0,
                     latency_ms: int | None = None, retries: int = 0, cache_hit: bool = False,
                     parse_mode: str | None = None, finish_reason: str | None = None,
-                    error: str | None = None) -> str:
+                    error: str | None = None, provider: str | None = None) -> str:
         """Record one model call and add its cost to the run, in a single transaction.
 
         Written for failures too. A run that burned budget on calls that errored has still spent the money,
@@ -304,10 +306,10 @@ class State:
         call_id = new_id()
         with self._lock, self._con:
             self._con.execute(
-                'INSERT INTO llm_calls (call_id, run_id, task_id, agent, tier, model, prompt_sha256, '
-                'prompt_tokens, completion_tokens, cost_usd, latency_ms, retries, cache_hit, parse_mode, '
-                'finish_reason, error, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
-                (call_id, run_id, task_id, agent, tier, model, prompt_sha256, prompt_tokens,
+                'INSERT INTO llm_calls (call_id, run_id, task_id, agent, tier, model, provider, '
+                'prompt_sha256, prompt_tokens, completion_tokens, cost_usd, latency_ms, retries, cache_hit, '
+                'parse_mode, finish_reason, error, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',
+                (call_id, run_id, task_id, agent, tier, model, provider, prompt_sha256, prompt_tokens,
                  completion_tokens, cost_usd, latency_ms, retries, int(cache_hit), parse_mode,
                  finish_reason, error, _now()))
             self._con.execute('UPDATE runs SET spend_usd = spend_usd + ? WHERE run_id = ?', (cost_usd, run_id))

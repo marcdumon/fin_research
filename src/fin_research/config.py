@@ -87,6 +87,11 @@ class LLMConfig:
     """
 
     base_url: str = _DEFAULT_BASE_URL
+    # How the gateway should choose between the backends serving a model. They differ by roughly an order of
+    # magnitude in speed for the same model and price, and left to itself the gateway picks one that is often
+    # slow: measured 4 to 72 tokens a second across providers on identical requests. Set to None to let the
+    # gateway decide.
+    provider_sort: str | None = 'throughput'
     max_concurrency: int = _DEFAULT_CONCURRENCY
     default_budget_usd: float = _DEFAULT_BUDGET_USD
     # Empty by default: a gated run waits for a human, and an unattended job would otherwise stall silently.
@@ -183,6 +188,7 @@ def read(path: Path | None = None) -> Config:
         ),
         llm=LLMConfig(
             base_url=llm_raw.get('base_url', _DEFAULT_BASE_URL),
+            provider_sort=llm_raw.get('provider_sort', 'throughput') or None,
             max_concurrency=llm_raw.get('max_concurrency', _DEFAULT_CONCURRENCY),
             default_budget_usd=llm_raw.get('default_budget_usd', _DEFAULT_BUDGET_USD),
             gate_tiers=tuple(llm_raw.get('gate_tiers', ())),

@@ -17,6 +17,10 @@ db_path = '/mnt/Dev/active_python_projects/investalyze/data/investalyze.duckdb'
 
 [llm]
 base_url = 'https://openrouter.ai/api/v1'
+# MD> Which backend the gateway picks matters more than which model. Measured on identical requests to
+# deepseek-chat: 7 tokens/second from one provider, 82 from another, same price. Left to itself the gateway
+# chooses arbitrarily between them. Set to '' to let it decide.
+provider_sort = 'throughput'
 max_concurrency = 8
 default_budget_usd = 2.0
 
