@@ -190,8 +190,9 @@ async def test_a_malformed_reply_is_re_prompted_with_the_error(client):
 
 @respx.mock
 async def test_rate_limiting_is_retried(client):
+    """The provider says how long to wait, and is believed."""
     route = respx.post(COMPLETIONS).mock(side_effect=[
-        httpx.Response(429),
+        httpx.Response(429, headers={'retry-after': '0'}),
         httpx.Response(200, json=response_payload('{"verdict": "ok", "score": 1}')),
     ])
 
@@ -200,6 +201,25 @@ async def test_rate_limiting_is_retried(client):
 
     assert route.call_count == 2
     assert result.parsed.score == 1
+
+
+def test_a_rate_limit_backs_off_on_its_own_scale():
+    """One run lost its whole sceptical case to three attempts inside the window that refused the first."""
+    from fin_research.llm.client import BASE_RETRY_DELAY, MAX_RETRY_DELAY, RATE_LIMIT_DELAY, _retry_delay
+
+    assert _retry_delay(0, 429, None) == RATE_LIMIT_DELAY
+    assert _retry_delay(1, 429, None) > RATE_LIMIT_DELAY
+    assert _retry_delay(0, 503, None) == BASE_RETRY_DELAY
+    assert _retry_delay(5, 429, None) == MAX_RETRY_DELAY, 'backoff must not grow without bound'
+
+
+def test_a_stated_retry_after_is_honoured_and_capped():
+    from fin_research.llm.client import MAX_RETRY_DELAY, _retry_delay
+
+    assert _retry_delay(0, 429, httpx.Response(429, headers={'retry-after': '7'})) == 7.0
+    assert _retry_delay(0, 429, httpx.Response(429, headers={'retry-after': '9999'})) == MAX_RETRY_DELAY
+    # A date-formatted Retry-After is legal and not a number; falling back beats crashing on it.
+    assert _retry_delay(0, 429, httpx.Response(429, headers={'retry-after': 'Wed, 21 Oct 2026 07:28:00 GMT'})) > 0
 
 
 @respx.mock

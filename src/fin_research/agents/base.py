@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from fin_research.config import Config
 from fin_research.core.passages import PassageIndex
-from fin_research.core.schemas import Claim, Finding, FindingSet
+from fin_research.core.schemas import Claim, Finding, FindingSet, Thesis
 from fin_research.core.state import State
 from fin_research.core.verification import FactIndex, SourceText, VerificationReport, surviving_findings, verify_claims
 from fin_research.llm.client import ModelClient, ModelRequest
@@ -70,10 +70,17 @@ class RunContext:
 
 @dataclass(frozen=True)
 class AgentResult:
-    """An agent's output after checking, with what was dropped on the way."""
+    """An agent's output after checking, with what was dropped on the way.
+
+    `artifact` is None when the model returned nothing this agent's schema could accept. A placeholder built
+    without validation used to stand in its place, and every reader of it raised AttributeError on the first
+    required field -- a run that had produced a full set of findings and a complete debate died rendering the
+    note. Absent is the honest answer, and the callers already handle it: the note simply says that stage
+    produced nothing.
+    """
 
     agent: str
-    artifact: BaseModel
+    artifact: BaseModel | None
     verification: VerificationReport
     cost_usd: float
     cache_hit: bool
@@ -144,12 +151,14 @@ class Analyst:
         """
         if isinstance(artifact, FindingSet):
             kept, report = surviving_findings(list(artifact.findings), ctx.sources, ctx.facts, ctx.passages)
-            return artifact.model_copy(update={'findings': kept}), report
+            identified = [f.model_copy(update={'claims': [identify(c) for c in f.claims]}) for f in kept]
+            return artifact.model_copy(update={'findings': identified}), report
 
         claims = getattr(artifact, 'claims', None)
         if isinstance(claims, list) and all(isinstance(c, Claim) for c in claims):
             report = verify_claims(claims, ctx.sources, ctx.facts, ctx.passages)
-            return artifact.model_copy(update={'claims': [v.claim for v in report.grounded]}), report
+            return artifact.model_copy(
+                update={'claims': [identify(v.claim) for v in report.grounded]}), report
 
         return artifact, VerificationReport(verdicts=())
 
@@ -171,9 +180,8 @@ class Analyst:
         result = await ctx.client.call(request, task_id=task_id)
 
         if result.parsed is None:
-            log.warning(f'{self.name}: model returned nothing usable; treating as an empty result')
-            artifact: BaseModel = self.schema.model_construct()
-            return AgentResult(agent=self.name, artifact=artifact, cost_usd=result.cost_usd,
+            log.warning(f'{self.name}: model returned nothing this schema accepts; the stage produced nothing')
+            return AgentResult(agent=self.name, artifact=None, cost_usd=result.cost_usd,
                                cache_hit=result.cache_hit, verification=VerificationReport(verdicts=()))
 
         checked, report = self._check(result.parsed, ctx)
@@ -183,6 +191,45 @@ class Analyst:
 
         return AgentResult(agent=self.name, artifact=checked, verification=report,
                            cost_usd=result.cost_usd, cache_hit=result.cache_hit)
+
+
+def identify(claim: Claim) -> Claim:
+    """Give a claim a stable identifier derived from its text.
+
+    Derived rather than random so the same claim made twice collapses to one reference, and so an identifier
+    survives a re-run of the same stage.
+
+    Whatever the model put in the field is overwritten. Structured output requires every property, so a model
+    fills `claim_id` whether or not it has anything to put there, and it reaches for 'c1'. Two agents doing
+    that independently would hand two different claims the same identifier, and the report would then cite
+    one while displaying the other.
+    """
+    from fin_research.ingest.store import digest
+
+    return claim.model_copy(update={'claim_id': digest(claim.text)[:8]})
+
+
+def claim_pool(findings: list[Finding],
+               theses: list[Thesis | None] | None = None) -> tuple[str, dict[str, Claim]]:
+    """Every claim that survived verification, listed with its identifier.
+
+    An agent downstream of verification argues over these rather than writing claims of its own. Everything
+    here has already been checked against a source, so an argument built from these identifiers inherits that
+    check; an argument that restated them would be attaching fresh citations to work it did not do.
+    """
+    pool: dict[str, Claim] = {}
+    for finding in findings:
+        for claim in finding.claims:
+            if claim.claim_id:
+                pool[claim.claim_id] = claim
+    for thesis in (theses or []):
+        for claim in (thesis.claims if thesis else []):
+            if claim.claim_id:
+                pool[claim.claim_id] = claim
+
+    lines = [f'[{claim.claim_id}] ({claim.claim_type.value}/{claim.polarity.value}) {claim.text}'
+             for claim in pool.values()]
+    return '\n'.join(lines), pool
 
 
 def findings_digest(findings: list[Finding], limit: int = 12) -> str:

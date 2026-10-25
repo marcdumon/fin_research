@@ -33,10 +33,10 @@ const STAGE_NAMES: Record<number, string> = {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  running: 'text-link',
+  running: 'text-accent',
   done: 'text-ink',
-  failed: 'text-expensive',
-  skipped: 'text-dropped',
+  failed: 'text-danger',
+  skipped: 'text-unverified',
 }
 
 export function Stages({ tasks }: { tasks: Task[] }) {
@@ -44,7 +44,7 @@ export function Stages({ tasks }: { tasks: Task[] }) {
   useTick(tasks.some((task) => task.status === 'running'))
 
   if (!stages.length) {
-    return <p className="text-muted text-[15px]">No agent has started yet.</p>
+    return <p className="text-muted text-base">No agent has started yet.</p>
   }
 
   const working = tasks.filter((task) => task.status === 'running')
@@ -52,7 +52,7 @@ export function Stages({ tasks }: { tasks: Task[] }) {
   return (
     <>
       {working.length > 0 && (
-        <p className="mb-3 text-[13.5px] text-muted">
+        <p className="mb-3 text-small text-muted">
           {working.length} reading now. Each one works through a whole section of the filing, so the first
           results take a minute or two to come back.
         </p>
@@ -62,15 +62,15 @@ export function Stages({ tasks }: { tasks: Task[] }) {
         const inStage = tasks.filter((t) => t.stage === stage)
         return (
           <li key={stage} className="border-b border-rule py-3 grid grid-cols-[2.5rem_1fr] gap-x-3">
-            <span className="text-[13px] text-muted pt-0.5">{stage}</span>
+            <span className="text-tiny text-muted pt-0.5">{stage}</span>
             <div>
-              <h3 className="text-[15px] font-medium">{STAGE_NAMES[stage] ?? `Stage ${stage}`}</h3>
+              <h3 className="text-base font-medium">{STAGE_NAMES[stage] ?? `Stage ${stage}`}</h3>
               <ul className="mt-1.5 space-y-1">
                 {inStage.map((task) => (
                   <li key={task.task_id}
-                      className="grid grid-cols-[10rem_5rem_auto] gap-x-4 items-baseline text-[14px]">
+                      className="grid grid-cols-[10rem_5rem_auto] gap-x-4 items-baseline text-small">
                     <span className="truncate">{task.agent}</span>
-                    <span className={`text-[12.5px] ${STATUS_STYLE[task.status] ?? 'text-muted'}`}>
+                    <span className={`text-tiny ${STATUS_STYLE[task.status] ?? 'text-muted'}`}>
                       {task.status === 'running' ? `working ${elapsed(task.started_at)}` : task.status}
                     </span>
                     <span className="text-muted">{money(task.cost_usd)}</span>
@@ -78,7 +78,7 @@ export function Stages({ tasks }: { tasks: Task[] }) {
                 ))}
               </ul>
               {inStage.filter((t) => t.error).map((task) => (
-                <p key={`${task.task_id}-error`} className="mt-1 text-[13px] text-expensive">{task.error}</p>
+                <p key={`${task.task_id}-error`} className="mt-1 text-tiny text-danger">{task.error}</p>
               ))}
             </div>
           </li>

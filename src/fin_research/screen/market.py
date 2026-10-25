@@ -124,13 +124,22 @@ def last_close(con: duckdb.DuckDBPyConnection, as_of: date, stale_days: int = 10
 
     A price that is weeks old usually means the company was delisted or acquired. Carrying those forward is
     how a screen ends up recommending something that no longer exists.
+
+    Staleness is measured against the latest close the database holds on or before `as_of`, not against the
+    calendar. The market database is updated separately and runs days behind; measured against the date, a
+    database eleven days behind made every company look delisted, so a screen considered nothing and the
+    watchlist patrol read every screen member as having left its screen. A company is stale when it stopped
+    trading while others carried on, which is what this now asks.
     """
     return con.execute(f"""
+        WITH latest AS (
+            SELECT max(Date) AS day FROM {MARKET_ALIAS}.prices WHERE Date <= DATE '{as_of}'
+        )
         SELECT Ticker, last(C ORDER BY Date) AS close, max(Date) AS price_date
-        FROM {MARKET_ALIAS}.prices
-        WHERE Date <= DATE '{as_of}' AND Date >= DATE '{as_of}' - INTERVAL 90 DAY
-        GROUP BY Ticker
-        HAVING max(Date) >= DATE '{as_of}' - INTERVAL {stale_days} DAY
+        FROM {MARKET_ALIAS}.prices, latest
+        WHERE Date <= DATE '{as_of}' AND Date >= latest.day - INTERVAL 90 DAY
+        GROUP BY Ticker, latest.day
+        HAVING max(Date) >= latest.day - INTERVAL {stale_days} DAY
     """).df()
 
 

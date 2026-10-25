@@ -160,9 +160,18 @@ def test_a_claim_whose_quote_is_present_survives():
     assert verdict.weakest_match is MatchKind.EXACT
 
 
-def test_fact_evidence_is_grounded_by_its_identifier():
-    evidence = verify_evidence(EvidenceRequest(kind=EvidenceKind.FACT, fact_id='f1'), {})
+def test_fact_evidence_is_grounded_by_a_metric_the_company_reported():
+    facts = FactIndex(by_metric={'Revenue': (391_035_000_000.0,)})
+    evidence = verify_evidence(EvidenceRequest(kind=EvidenceKind.FACT, fact_id='Revenue'), {}, None, facts)
     assert evidence.is_grounded
+
+
+def test_fact_evidence_naming_a_metric_that_was_never_reported_is_not_grounded():
+    """A run cited a metric called FINDINGS -- the heading of its own prompt -- and it passed unexamined."""
+    facts = FactIndex(by_metric={'Revenue': (391_035_000_000.0,)})
+    request = EvidenceRequest(kind=EvidenceKind.FACT, fact_id='FINDINGS')
+    assert not verify_evidence(request, {}, None, facts).is_grounded
+    assert not verify_evidence(request, {}).is_grounded, 'nothing to check against is not a pass'
 
 
 # --- reports ------------------------------------------------------------------
@@ -313,3 +322,48 @@ def test_the_report_counts_figures_separately_from_citations(reported, quoted):
 def test_an_empty_index_checks_nothing(quoted):
     _, evidence = quoted
     assert FactIndex.from_facts([]).check(_numeric(416.2, 'Revenue', evidence))[0] is NumericVerdict.UNCHECKED
+
+
+def test_a_figure_copied_without_its_table_scale_is_named_as_such():
+    """A model reading '$ in Thousands' and copying 3,926 states a figure a thousand times too small."""
+    facts = FactIndex(by_metric={'Net Income': (3_926_000.0,)})
+    claim = _claim(claim_type=ClaimType.NUMERIC, text='Net income in 2026 was $3,926', metric='Net Income',
+                   numeric_value=3926.0, evidence=[EvidenceRequest(document_id='d1', quoted_text='x' * 20)])
+    verdict = verify_claim(claim, {'d1': SourceText('x' * 20)}, facts)
+
+    assert not verdict.grounded
+    assert 'a table scale was not applied' in verdict.reason
+    assert facts.implied_scale(claim) == 1e3
+
+
+def test_a_figure_that_is_simply_wrong_is_not_blamed_on_scale():
+    facts = FactIndex(by_metric={'Net Income': (3_926_000.0,)})
+    claim = _claim(claim_type=ClaimType.NUMERIC, text='Net income in 2026 was $80 million',
+                   metric='Net Income', numeric_value=80.0, numeric_unit='USD millions',
+                   evidence=[EvidenceRequest(document_id='d1', quoted_text='x' * 20)])
+    verdict = verify_claim(claim, {'d1': SourceText('x' * 20)}, facts)
+
+    assert not verdict.grounded
+    assert 'the filer reported' in verdict.reason
+    assert facts.implied_scale(claim) is None
+
+
+def test_a_percentage_of_a_metric_is_not_a_claim_about_its_level():
+    """'Five contracts are 19% of revenues' arrives tagged Revenue; comparing 19 to revenue rejects a fact."""
+    facts = FactIndex(by_metric={'Revenue': (4_640_280_000.0,)})
+    claim = _claim(claim_type=ClaimType.NUMERIC, metric='Revenue', numeric_value=19.0,
+                   numeric_unit='percent of total revenues',
+                   text='Five contracts generated 19% of total revenues',
+                   evidence=[EvidenceRequest(document_id='d1', quoted_text='x' * 20)])
+    verdict = verify_claim(claim, {'d1': SourceText('x' * 20)}, facts)
+
+    assert verdict.grounded, 'a quoted proportion was rejected for disagreeing with the total'
+    assert verdict.numeric is NumericVerdict.UNCHECKED
+
+
+def test_an_amount_labelled_with_a_metric_is_still_checked():
+    facts = FactIndex(by_metric={'Revenue': (4_640_280_000.0,)})
+    claim = _claim(claim_type=ClaimType.NUMERIC, metric='Revenue', numeric_value=19.0,
+                   numeric_unit='USD billions', text='Revenue was $19 billion',
+                   evidence=[EvidenceRequest(document_id='d1', quoted_text='x' * 20)])
+    assert not verify_claim(claim, {'d1': SourceText('x' * 20)}, facts).grounded

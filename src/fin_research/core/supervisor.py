@@ -22,12 +22,12 @@ from datetime import date
 import duckdb
 
 from fin_research.agents import AGENTS
-from fin_research.agents.base import AgentResult, RunContext
+from fin_research.agents.base import AgentResult, RunContext, identify
 from fin_research.agents.debate import thesis_digest
 from fin_research.core.approvals import DOWNGRADED, Rejected, gate
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 from fin_research.core.state import BudgetExceeded, State
-from fin_research.core.verification import FactIndex
+from fin_research.core.verification import ClaimVerdict, FactIndex
 from fin_research.ingest import store as store_module
 from fin_research.ingest.store import MARKET_ALIAS
 from fin_research.llm.router import resolve
@@ -72,21 +72,20 @@ def load_sources(con: duckdb.DuckDBPyConnection, ticker: str, as_of: date) -> So
     if latest:
         accession = latest[0]
         for item_key in set(SECTION_FOR_AGENT.values()):
+            # The section's own id, not the document's. Items 1, 1A and 7 come from one 10-K and therefore
+            # share a document_id; keying citations on that gave three agents one slot, so whichever
+            # registered last decided what all three were checked against. Passage numbers then resolved
+            # against the wrong section and were recorded as exact matches, because a number cannot be
+            # compared to the text it was meant to point at.
             row = con.execute("""
-                SELECT s.document_id, substr(d.text, s.char_start + 1, s.char_end - s.char_start)
+                SELECT s.section_id, substr(d.text, s.char_start + 1, s.char_end - s.char_start)
                 FROM sections s JOIN documents d USING (document_id)
                 WHERE s.accession = ? AND s.item_key = ? AND NOT s.is_redirect
             """, [accession, item_key]).fetchone()
             if row:
                 sources.sections[item_key] = (row[0], row[1])
 
-        statements = con.execute("""
-            SELECT document_id, text FROM documents
-            WHERE accession = ? AND doc_role = 'statements' ORDER BY filename
-        """, [accession]).fetchall()
-        if statements:
-            # One combined source, so a claim can cite across the statements it reconciles.
-            sources.statements = (statements[0][0], '\n\n'.join(text for _, text in statements))
+        sources.statements = store_module.statements_source(con, accession)
 
     press = con.execute("""
         SELECT d.document_id, d.text FROM documents d JOIN filings f USING (accession)
@@ -148,6 +147,22 @@ class DeepDive:
     results: list[AgentResult] = field(default_factory=list)
 
     @property
+    def verdicts(self) -> dict[str, ClaimVerdict]:
+        """Every claim that passed verification, by identifier, with what the verifier matched it against.
+
+        The report refers to claims rather than restating them, so this is what turns it back into prose with
+        citations attached. Taken from the verdicts rather than from the surviving artifacts because the
+        verdict carries the resolved evidence -- the offsets and the matched text -- which the claim itself
+        does not, and which the renderer would otherwise have to work out a second time with less to go on.
+        """
+        found: dict[str, ClaimVerdict] = {}
+        for result in self.results:
+            for verdict in result.verification.grounded:
+                identifier = identify(verdict.claim).claim_id
+                found.setdefault(identifier, verdict)
+        return found
+
+    @property
     def cost_usd(self) -> float:
         """What the agents spent."""
         return sum(r.cost_usd for r in self.results)
@@ -159,6 +174,42 @@ class DeepDive:
         if not checkable:
             return None
         return sum(1 for v in checkable if v.grounded) / len(checkable)
+
+    @property
+    def match_kinds(self) -> dict[str, int]:
+        """How every citation in the run was matched, summed across the agents.
+
+        Summed here once rather than merged at each call site. The report used to build this with a dict
+        comprehension over the agents, which keeps only the last agent's count for each key, so a note with
+        twenty-six citations reported one exact match.
+        """
+        return _summed(r.verification.match_kinds() for r in self.results)
+
+    @property
+    def numeric_outcomes(self) -> dict[str, int]:
+        """What checking the run's figures against the filed statements established, summed across agents."""
+        return _summed(r.verification.numeric_outcomes() for r in self.results)
+
+    @property
+    def summary(self) -> dict:
+        """The run's verification figures, as the note on disk and the dashboard both report them."""
+        checkable = [v for r in self.results for v in r.verification.checkable]
+        return {
+            'groundedness': self.groundedness,
+            'checked': len(checkable),
+            'dropped': sum(1 for v in checkable if not v.grounded),
+            'match_kinds': self.match_kinds,
+            'numeric': self.numeric_outcomes,
+        }
+
+
+def _summed(counts) -> dict[str, int]:
+    """Add several tallies together, key by key."""
+    total: dict[str, int] = {}
+    for tally in counts:
+        for key, value in tally.items():
+            total[key] = total.get(key, 0) + value
+    return total
 
 
 def _gate_prompt(ctx: RunContext, name: str) -> str:
@@ -209,8 +260,9 @@ async def _run_agent(name: str, ctx: RunContext, stage: int, semaphore: asyncio.
             return None
 
         ctx.state.finish_task(task_id, 'done')
-        ctx.state.save_artifact(ctx.run_id, name, AGENTS[name].output_type,
-                                result.artifact.model_dump(mode='json'), task_id)
+        if result.artifact is not None:
+            ctx.state.save_artifact(ctx.run_id, name, AGENTS[name].output_type,
+                                    result.artifact.model_dump(mode='json'), task_id)
         return result
 
 
@@ -256,24 +308,28 @@ async def run_deep_dive(ctx: RunContext, sources: Sources, price: float | None =
 
         # Stages three to five: the debate, fixed at three calls, each side reading the other.
         bull = await _run_agent('bull', ctx, 3, semaphore, findings=outcome.findings)
-        outcome.bull = bull.artifact if bull else None
+        outcome.bull = bull.artifact if bull else None  # type: ignore[assignment]
         if bull:
             outcome.results.append(bull)
 
         bear = await _run_agent('bear', ctx, 4, semaphore, findings=outcome.findings,
                                 opposing=thesis_digest(outcome.bull))
-        outcome.bear = bear.artifact if bear else None
+        outcome.bear = bear.artifact if bear else None  # type: ignore[assignment]
         if bear:
             outcome.results.append(bear)
 
         rebuttal = await _run_agent('bull', ctx, 5, semaphore, findings=outcome.findings,
                                     opposing=thesis_digest(outcome.bear))
-        outcome.rebuttal = rebuttal.artifact if rebuttal else None
+        outcome.rebuttal = rebuttal.artifact if rebuttal else None  # type: ignore[assignment]
         if rebuttal:
             outcome.results.append(rebuttal)
 
-        valued = await _run_agent('valuation', ctx, 5, semaphore, findings=outcome.findings, price=price)
-        outcome.valuation = valued.artifact if valued else None
+        # The statements go to the valuation as well as to the reader that summarised them. A valuation
+        # built from summaries invents the balance sheet: one run assumed a cash balance and a share count
+        # the filing states outright, and priced the company off both.
+        valued = await _run_agent('valuation', ctx, 5, semaphore, findings=outcome.findings, price=price,
+                                  statements=sources.statements[1] if sources.statements else None)
+        outcome.valuation = valued.artifact if valued else None  # type: ignore[assignment]
         if valued:
             outcome.results.append(valued)
 
@@ -283,9 +339,18 @@ async def run_deep_dive(ctx: RunContext, sources: Sources, price: float | None =
                                    valuation=outcome.valuation)
         if written is not None:
             outcome.results.append(written)
-            outcome.report = written.artifact
+            outcome.report = written.artifact  # type: ignore[assignment]
 
         outcome.status = 'done' if outcome.report is not None else 'incomplete'
+
+        # What verification concluded, kept with the run. The claims that survived are already in
+        # the artifacts, but not the evidence the verifier matched them against, nor how closely. Rebuilding
+        # that later means re-reading the filings as they stand now, and a company ingested again since has
+        # different section identifiers -- so the record would quietly stop resolving. Written here, a note
+        # reads the same in a year as it did on the day.
+        if outcome.results:
+            ctx.state.save_artifact(ctx.run_id, 'verification', 'Verdicts', serialise_verdicts(outcome))
+            ctx.state.save_artifact(ctx.run_id, 'verification', 'VerificationSummary', outcome.summary)
 
     except BudgetExceeded as error:
         log.warning(f'run stopped on budget: {error}')
@@ -293,6 +358,20 @@ async def run_deep_dive(ctx: RunContext, sources: Sources, price: float | None =
 
     ctx.state.finish_run(ctx.run_id, outcome.status)
     return outcome
+
+
+def serialise_verdicts(outcome: 'DeepDive') -> dict:
+    """The verification record for a run, keyed by claim identifier and ready to store as JSON."""
+    return {
+        claim_id: {
+            'claim': verdict.claim.model_dump(mode='json'),
+            'evidence': [item.model_dump(mode='json') for item in verdict.evidence],
+            'grounded': verdict.grounded,
+            'reason': verdict.reason,
+            'numeric': verdict.numeric.value if verdict.numeric else None,
+        }
+        for claim_id, verdict in outcome.verdicts.items()
+    }
 
 
 @dataclass(frozen=True)

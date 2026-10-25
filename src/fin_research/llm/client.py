@@ -39,6 +39,31 @@ BASE_RETRY_DELAY = 1.0
 BACKOFF_FACTOR = 2.0
 RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504})
 
+# A rate limit is not a transient hiccup and does not clear in a second. Providers count requests over a
+# window measured in tens of seconds, so 1s then 2s -- fine for a dropped connection -- exhausts every
+# attempt inside the window that caused the refusal and loses the stage. One run lost its whole sceptical
+# case that way, leaving a debate with one side in it.
+RATE_LIMIT_DELAY = 20.0
+# Past this, waiting costs more than the call is worth; the run gives up on the stage and carries on.
+MAX_RETRY_DELAY = 90.0
+
+
+def _retry_delay(attempt: int, status: int | None, response: object) -> float:
+    """How long to wait before the next attempt.
+
+    A provider that says how long to wait is believed, up to the ceiling. Otherwise a rate limit backs off on
+    its own, much longer scale, and everything else on the short one.
+    """
+    retry_after = getattr(getattr(response, 'headers', None), 'get', lambda _: None)('retry-after')
+    if retry_after:
+        try:
+            return min(float(retry_after), MAX_RETRY_DELAY)
+        except ValueError:
+            pass
+
+    base = RATE_LIMIT_DELAY if status == 429 else BASE_RETRY_DELAY
+    return min(base * BACKOFF_FACTOR ** attempt, MAX_RETRY_DELAY)
+
 
 class ModelCallError(RuntimeError):
     """Raised when a call could not be completed after every attempt."""
@@ -181,7 +206,7 @@ class ModelClient:
                         detail = getattr(response, 'text', '')[:400]
                     raise ModelCallError(f'{status} from provider: {detail}') from error
                 if attempt < MAX_ATTEMPTS - 1:
-                    delay = BASE_RETRY_DELAY * BACKOFF_FACTOR ** attempt
+                    delay = _retry_delay(attempt, status, response)
                     log.warning(f'model call failed ({error}); retrying in {delay:.1f}s')
                     await asyncio.sleep(delay)
 

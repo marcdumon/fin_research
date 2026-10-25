@@ -22,6 +22,7 @@ from fin_research.config import Config
 from fin_research.core.state import State
 from fin_research.core.supervisor import Sources, run_deep_dive
 from fin_research.ingest.sections import split
+from fin_research.ingest.store import digest
 from fin_research.ingest.text import clean
 from fin_research.llm.client import ModelClient, response_payload
 from fin_research.report.render import render
@@ -88,20 +89,22 @@ def _valuation() -> str:
     })
 
 
-def _report(document_id: str, quote: str) -> str:
+def _claim_id(text: str) -> str:
+    """The identifier the pipeline will have given a claim with this text."""
+    return digest(text)[:8]
+
+
+def _report(numbers: list[str], bull: list[str], bear: list[str]) -> str:
+    """A Report reply that refers to claims by identifier, as the synthesiser is told to."""
     return json.dumps({
         'ticker': 'AAPL', 'as_of': '2026-09-20',
         'thesis': 'The business is durable and the evidence supports a constructive view.',
         'direction': 'constructive', 'confidence': 'medium',
-        'numbers': [], 'bear_case': [], 'disagreements': [
+        'numbers': numbers, 'bull_case': bull, 'bear_case': bear,
+        'disagreements': [
             {'question': 'Is the services margin sustainable?',
              'bull_position': 'Yes, on the disclosed mix.', 'bear_position': 'Unproven at this scale.',
              'resolution': None, 'resolved': False}],
-        'bull_case': [{'claim_id': '', 'claim_type': 'fact', 'text': 'The filing describes the business',
-                       'subject': None, 'polarity': 'bull', 'importance': 4, 'numeric_value': None,
-                       'numeric_unit': None, 'attacks': [],
-                       'evidence': [{'kind': 'span', 'document_id': document_id, 'section_id': None,
-                                     'quoted_text': quote, 'fact_id': None}]}],
         'falsifiers': ['Services revenue declines year over year'],
         'generated_at': None,
     })
@@ -118,7 +121,11 @@ def replies(filing) -> dict:
         'bull': _thesis('bull'),
         'bear': _thesis('bear'),
         'valuation': _valuation(),
-        'synthesis': _report('doc-1', _quote(filing['1'], 500)),
+        'synthesis': _report(numbers=[_claim_id(f"The filing states: {_quote(filing['7'], 2500)[:80]}")],
+                             bull=[_claim_id(f"The filing states: {_quote(filing['1'], 500)[:80]}"),
+                                   _claim_id('A bull view is warranted'),
+                                   'ffffffff'],
+                             bear=[_claim_id('A bear view is warranted')]),
     }
 
 
@@ -185,7 +192,7 @@ async def test_a_full_run_produces_a_cited_report(tmp_path, filing, replies):
         assert {'business', 'risk_factors', 'management_view', 'financials',
                 'bull', 'bear', 'valuation', 'synthesis'} <= agents_run
 
-        markdown = render(outcome.report, ctx.sources, groundedness=outcome.groundedness,
+        markdown = render(outcome.report, outcome.verdicts, groundedness=outcome.groundedness,
                           cost_usd=summary.spend_usd)
 
     assert '# AAPL — research note' in markdown
@@ -194,6 +201,12 @@ async def test_a_full_run_produces_a_cited_report(tmp_path, filing, replies):
     assert '[1]' in markdown, 'no inline citation was rendered'
     assert FABRICATED not in markdown
     assert 'Groundedness' in markdown
+
+    # The note is built from claims the run actually verified: the identifiers resolve to their text, and one
+    # that names nothing -- a reference the synthesiser invented -- leaves no trace.
+    assert 'A bull view is warranted' in markdown
+    assert 'A bear view is warranted' in markdown
+    assert 'ffffffff' not in markdown
 
 
 @respx.mock
@@ -316,3 +329,67 @@ async def test_a_wrong_figure_never_reaches_the_report(tmp_path, filing, replies
 
     outcomes = {k: v for result in outcome.results for k, v in result.verification.numeric_outcomes().items()}
     assert outcomes.get('contradicted', 0) >= 1, 'the contradiction should be recorded, not merely dropped'
+
+
+@respx.mock
+async def test_a_stage_that_produces_nothing_does_not_take_the_run_down(tmp_path, filing, replies):
+    """A valuation whose reply the schema rejects used to reach the renderer as a field-less placeholder.
+
+    Every reader of it raised AttributeError on the first required field, so a run that had produced a full
+    set of findings, a complete debate and a report died writing the note. It must now render without one.
+    """
+    replies['valuation'] = 'I am unable to value this company from what you have given me.'
+    respx.post(COMPLETIONS).mock(side_effect=_router(replies))
+    cfg = Config(data_root=tmp_path)
+
+    sources = Sources(
+        sections={'1': ('doc-1', filing['1']), '1A': ('doc-1A', filing['1A']), '7': ('doc-7', filing['7'])},
+        statements=('doc-fin', filing['7'][:5000]))
+
+    with State(tmp_path / 'state.sqlite') as state:
+        run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=5.0)
+        async with ModelClient(cfg=cfg, state=state, run_id=run_id, api_key='k') as client:
+            ctx = RunContext(cfg=cfg, state=state, client=client, run_id=run_id,
+                             ticker='AAPL', as_of=date(2026, 9, 20))
+            outcome = await run_deep_dive(ctx, sources, price=220.0)
+
+        assert outcome.valuation is None
+        assert outcome.report is not None, 'one failed stage ended the whole run'
+        markdown = render(outcome.report, outcome.verdicts, valuation=outcome.valuation)
+
+    assert '_No valuation was produced._' in markdown
+    assert '# AAPL — research note' in markdown
+
+
+@respx.mock
+async def test_the_dashboard_reports_the_same_verification_figures_as_the_note_on_disk(tmp_path, filing, replies):
+    """The page said 100% of claims were verified while the file said 79%. It computed its figure over the
+    claims kept after checking, which is every claim that passed, and so could never say anything else."""
+    from fin_research.report.note import as_json, build_note
+
+    respx.post(COMPLETIONS).mock(side_effect=_router(replies))
+    cfg = Config(data_root=tmp_path)
+    sources = Sources(
+        sections={'1': ('doc-1', filing['1']), '1A': ('doc-1A', filing['1A']), '7': ('doc-7', filing['7'])},
+        statements=('doc-fin', filing['7'][:5000]))
+
+    with State(tmp_path / 'state.sqlite') as state:
+        run_id = state.start_run('AAPL', 320193, date(2026, 9, 20), budget_usd=5.0)
+        async with ModelClient(cfg=cfg, state=state, run_id=run_id, api_key='k') as client:
+            ctx = RunContext(cfg=cfg, state=state, client=client, run_id=run_id,
+                             ticker='AAPL', as_of=date(2026, 9, 20))
+            outcome = await run_deep_dive(ctx, sources, price=220.0)
+        page = as_json(build_note(state, run_id))
+
+    assert outcome.groundedness is not None and outcome.groundedness < 1.0, 'the fixture must drop something'
+    assert page['groundedness'] == outcome.groundedness
+    assert page['dropped'] >= 1
+
+    # Summed across the agents, not the last agent's tally.
+    expected: dict[str, int] = {}
+    for result in outcome.results:
+        for key, value in result.verification.match_kinds().items():
+            expected[key] = expected.get(key, 0) + value
+    assert page['match_kinds'] == expected
+    assert sum(page['match_kinds'].values()) > max(
+        sum(r.verification.match_kinds().values()) for r in outcome.results), 'only one agent was counted'

@@ -22,13 +22,38 @@ from datetime import date, datetime
 from enum import StrEnum
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Strict(BaseModel):
-    """Base for every artifact: immutable, and rejecting fields the schema did not define."""
+    """Base for every artifact: immutable, and rejecting fields the schema did not define.
+
+    A string or list longer than its declared maximum is cut to fit rather than rejected. The lengths are
+    there to stop a model writing an essay into a field, not to decide whether its work is usable: two runs
+    lost an entire valuation -- the scenarios, the assumptions, the reasoning -- one because the method ran
+    to 130 characters where 120 were asked for, the other because it listed 19 assumptions where 12 were.
+    Cutting keeps the limit doing its job at a cost proportional to the fault. A missing field or a wrong
+    type still fails, because those are faults in the work itself rather than in how much of it there is.
+    """
 
     model_config = ConfigDict(frozen=True, extra='forbid')
+
+    @model_validator(mode='before')
+    @classmethod
+    def _fit_to_declared_limits(cls, data: object) -> object:
+        """Cut any over-long string or list to the maximum its field declares."""
+        if not isinstance(data, dict):
+            return data
+
+        trimmed = dict(data)
+        for name, field in cls.model_fields.items():
+            value = trimmed.get(name)
+            if not isinstance(value, str | list):
+                continue
+            limit = next((m.max_length for m in field.metadata if getattr(m, 'max_length', None)), None)
+            if limit is not None and len(value) > limit:
+                trimmed[name] = value[:limit]
+        return trimmed
 
 
 class EvidenceKind(StrEnum):
@@ -45,12 +70,19 @@ class MatchKind(StrEnum):
     Ordered from strongest to weakest. Anything other than NONE means the text is genuinely present; the
     weaker rungs exist because a model retypes a quote in plain ASCII while filings are full of typographic
     punctuation and invisible characters.
+
+    POSITIONAL is the odd one, and the one to watch. It means a passage number resolved and nothing
+    corroborated it: the citation points at real text, but no check established that this is the text the
+    claim was about. A number cannot be compared against what it was meant to point at, so a model citing
+    passage 57 when it meant 75 produces a confident, exactly located, wrong citation. The note counts these
+    separately for that reason -- one resting mostly on positional matches has been located, not checked.
     """
 
     EXACT = 'exact'
     WHITESPACE = 'whitespace'
     UNICODE = 'unicode'
     CASE = 'case'
+    POSITIONAL = 'positional'
     NONE = 'none'
 
 
@@ -115,7 +147,7 @@ class Evidence(Strict):
 class Claim(Strict):
     """One assertion, with the evidence offered for it."""
 
-    claim_id: str = Field(default_factory=lambda: '', description='assigned by the runtime, not the model')
+    claim_id: str = Field('', description='assigned by the runtime, not the model')
     claim_type: ClaimType
     text: str = Field(max_length=600)
     subject: str | None = None
@@ -131,9 +163,22 @@ class Claim(Strict):
     attacks: list[str] = Field(default_factory=list, description='claim ids this one disputes')
 
     @property
+    def states_a_share(self) -> bool:
+        """True if the figure is a proportion rather than an amount."""
+        unit = (self.numeric_unit or '').lower()
+        return '%' in unit or 'percent' in unit or 'share of' in unit or 'basis point' in unit
+
+    @property
     def is_checkable_number(self) -> bool:
-        """True if this claim states a figure that can be compared against a reported one."""
-        return self.claim_type is ClaimType.NUMERIC and self.numeric_value is not None and bool(self.metric)
+        """True if this claim states a figure that can be compared against a reported one.
+
+        A proportion is not one, whatever it is labelled. Models routinely attach a metric to a percentage
+        of it -- 'the five largest contracts generated 19% of total revenues' arrives tagged Revenue -- and
+        comparing 19 against the reported revenue rejects a correct, quoted claim for saying something it
+        never said. The span check still applies, so the sentence must exist; only the arithmetic is skipped.
+        """
+        return (self.claim_type is ClaimType.NUMERIC and self.numeric_value is not None
+                and bool(self.metric) and not self.states_a_share)
 
     @property
     def needs_evidence(self) -> bool:
@@ -254,10 +299,13 @@ class Triage(Strict):
 class Report(Strict):
     """The finished research note.
 
-    The valuation is not part of this schema. The valuation agent already produced one, and asking the
-    synthesiser to reproduce it wastes tokens and invites transcription error. It also made the schema deep
-    enough that one provider rejected the request outright -- structured output has nesting and size limits,
-    and a schema that embeds every other artifact reaches them. The renderer takes the stored valuation.
+    Carries identifiers rather than content. Everything it refers to has already been produced and checked,
+    so restating it here would mean the expensive model transcribing verified work and attaching citations it
+    cannot have. The renderer resolves the identifiers back to the original claims and their evidence.
+
+    The valuation is not part of this schema either, for the same reason and one more: embedding it made the
+    schema deep enough that a provider rejected the request outright, since structured output has nesting and
+    size limits.
     """
 
     ticker: str
@@ -265,9 +313,15 @@ class Report(Strict):
     thesis: str = Field(max_length=2000)
     direction: Literal['constructive', 'cautious', 'neutral']
     confidence: Literal['low', 'medium', 'high']
-    numbers: list[Claim] = Field(default_factory=list, max_length=12)
-    bull_case: list[Claim] = Field(default_factory=list, max_length=12)
-    bear_case: list[Claim] = Field(default_factory=list, max_length=12)
+    # Identifiers of claims established earlier, not new claims. The synthesiser selects and orders what
+    # survived verification; it does not restate it. Asking it to restate produced claims citing a document
+    # that did not exist, because it was shown summaries rather than sources and had nothing real to cite.
+    numbers: list[str] = Field(default_factory=list, max_length=12,
+                               description="identifiers of claims about the figures, e.g. '4f2a9c01'")
+    bull_case: list[str] = Field(default_factory=list, max_length=12,
+                                 description='identifiers of claims supporting the constructive case')
+    bear_case: list[str] = Field(default_factory=list, max_length=12,
+                                 description='identifiers of claims supporting the sceptical case')
     falsifiers: list[str] = Field(default_factory=list, max_length=6)
     disagreements: list[Disagreement] = Field(default_factory=list, max_length=6)
     generated_at: datetime | None = None

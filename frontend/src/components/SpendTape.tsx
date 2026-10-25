@@ -45,7 +45,7 @@ export function SpendTape({ byAgent, spend, budget, status, calls }: {
   if (!spent.length) {
     return (
       <section aria-label="Spend">
-        <p className="text-[15px] text-muted">
+        <p className="text-base text-muted">
           {stopped ? 'Stopped before spending anything: the ceiling was already reached.'
                    : 'Nothing spent yet.'}
         </p>
@@ -56,10 +56,10 @@ export function SpendTape({ byAgent, spend, budget, status, calls }: {
   return (
     <section aria-label="Spend by tier">
       <div className="flex flex-wrap items-baseline gap-x-10 gap-y-2">
-        <span className="text-4xl font-bold tracking-tight">{money(spend)}</span>
-        <span className="text-[15px] text-muted">{compact(tokens)} tokens</span>
-        <span className="text-[15px] text-muted">{calls} calls</span>
-        <span className={`text-[15px] ${stopped ? 'text-expensive font-medium' : 'text-muted'}`}>
+        <span className="text-hero font-bold tracking-tight">{money(spend)}</span>
+        <span className="text-base text-muted">{compact(tokens)} tokens</span>
+        <span className="text-base text-muted">{calls} calls</span>
+        <span className={`text-base ${stopped ? 'text-danger font-medium' : 'text-muted'}`}>
           {stopped ? 'stopped at the ceiling' : `ceiling ${money(budget)}`}
         </span>
       </div>
@@ -68,8 +68,8 @@ export function SpendTape({ byAgent, spend, budget, status, calls }: {
            aria-label={byTier.map((t) => `${t.tier} ${money(t.cost)}`).join(', ')}>
         {byTier.map((tier) => (
           <div key={tier.tier} style={{ width: `${(tier.cost / spend) * 100}%`, background: TIER_FILL[tier.tier] }}
-               className="relative border-r-2 border-ground last:border-r-0 transition-[width] duration-700">
-            <span className="absolute inset-0 flex items-center px-3 text-surface text-[13px] font-medium
+               className="relative border-r-2 border-rule last:border-r-0 transition-[width] duration-700">
+            <span className="absolute inset-0 flex items-center px-3 text-ground text-tiny font-medium
                              whitespace-nowrap overflow-hidden">
               {tier.tier}
             </span>
@@ -80,11 +80,11 @@ export function SpendTape({ byAgent, spend, budget, status, calls }: {
       <dl className="mt-4 grid gap-x-8 gap-y-3 sm:grid-cols-3">
         {byTier.map((tier) => (
           <div key={tier.tier} className="border-t-2 pt-2" style={{ borderColor: TIER_FILL[tier.tier] }}>
-            <dt className="flex items-baseline justify-between gap-2 text-[14px]">
+            <dt className="flex items-baseline justify-between gap-2 text-small">
               <span className="font-medium">{money(tier.cost)}</span>
               <span className="text-muted">{Math.round((tier.cost / spend) * 100)}%</span>
             </dt>
-            <dd className="text-[13px] text-muted mt-0.5">
+            <dd className="text-tiny text-muted mt-0.5">
               {TIER_MEANING[tier.tier]}
               <span className="block mt-0.5">{tier.agents.join(', ')}</span>
             </dd>

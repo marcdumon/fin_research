@@ -161,3 +161,37 @@ def test_shipped_screens_are_valid():
     for screen in screens.values():
         assert screen.require, f'{screen.name} filters nothing'
         assert screen.explain()
+
+
+def _prices(connection, closes: dict[str, date]) -> None:
+    """A price table whose last close per ticker is the given date."""
+    frame = pd.DataFrame([{'Ticker': ticker, 'Date': day, 'O': 1.0, 'H': 1.0, 'L': 1.0, 'C': 10.0, 'V': 1,
+                           'AC': 10.0} for ticker, day in closes.items()])
+    connection.register('price_rows', frame)
+    connection.execute(f'CREATE TABLE {MARKET}.prices AS SELECT * FROM price_rows')
+
+
+def test_a_database_that_is_behind_does_not_make_every_company_look_delisted():
+    """The market database stopped on 11 September. Screened on the 22nd, eleven days on, every company fell
+    outside the ten-day window, so a screen considered nothing and every screen member looked like it had left."""
+    from fin_research.screen.market import last_close
+
+    connection = duckdb.connect()
+    connection.execute(f'CREATE SCHEMA {MARKET}')
+    _prices(connection, {'LIVE': date(2026, 9, 11), 'ALSO': date(2026, 9, 10), 'GONE': date(2026, 7, 1)})
+
+    current = set(last_close(connection, date(2026, 9, 22))['Ticker'])
+
+    assert current == {'LIVE', 'ALSO'}, 'a company that stopped trading months ago should still be dropped'
+
+
+def test_the_latest_close_is_judged_as_of_the_date_asked_for():
+    """Point in time: a screen dated in the past must not learn that the database carries on beyond it."""
+    from fin_research.screen.market import last_close
+
+    connection = duckdb.connect()
+    connection.execute(f'CREATE SCHEMA {MARKET}')
+    _prices(connection, {'EARLY': date(2025, 6, 30), 'LATE': date(2026, 9, 11)})
+
+    frame = last_close(connection, date(2025, 6, 30))
+    assert set(frame['Ticker']) == {'EARLY'}

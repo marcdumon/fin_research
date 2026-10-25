@@ -26,8 +26,10 @@ CITATION_RULES = """
 The source below is split into numbered passages. EVERY claim must cite at least one passage number. A claim
 with an empty `evidence` list is thrown away, and so is the work that produced it.
 
-Cite by number, not by quoting. You cannot mistype a number the way you can mistype a sentence, and a claim
-whose citation does not resolve is discarded however accurate the claim was.
+Cite the passage number, and with it a short anchor: five to fifteen words copied exactly from that passage.
+The number gives the location and the anchor proves you read it. A number on its own cannot be checked
+against anything -- nothing can tell 57 from 75 -- so a claim carrying only a number is marked in the report
+as located but unverified, which is worth less than a claim that carries both.
 
 {
   "headline": "Sales are concentrated in a first-quarter peak",
@@ -36,7 +38,8 @@ whose citation does not resolve is discarded however accurate the claim was.
     {
       "claim_type": "fact",
       "text": "Sales are historically highest in the first quarter, partly from holiday demand",
-      "evidence": [{"kind": "span", "document_id": "<the document_id given above>", "passage_id": 57}]
+      "evidence": [{"kind": "span", "document_id": "<the document_id given above>", "passage_id": 57,
+                    "quoted_text": "net sales are historically highest in the first quarter"}]
     }
   ],
   "tags": []
@@ -44,7 +47,8 @@ whose citation does not resolve is discarded however accurate the claim was.
 
 Rules:
 - Cite the passage that actually says it. A number picked because it looks about right is a wrong citation.
-- Write the claim in your own words. The passage number carries the proof, so you need not repeat the text.
+- Copy the anchor character for character. A rephrased anchor fails the check and takes the claim with it.
+- Write the claim itself in your own words; the anchor is the proof, not the claim.
 - Never state a figure no passage contains. Do not calculate, round or convert unless asked.
 - If no passage supports something, put it in `unresolved` rather than claiming it.
 - Few findings is a correct answer when the source says little. Do not pad.
@@ -65,7 +69,17 @@ Set `metric` ONLY when a figure is one of these exact company-wide lines:
 Set `metric` to null for anything else -- a segment, a region, a product line, a percentage, a headcount.
 A segment's revenue is not Revenue, and labelling it so gets a correct claim thrown away for disagreeing
 with a total it was never meant to equal. Where the metric is named, the figure is checked against the
-company's own filed statements, so naming it correctly protects the claim."""
+company's own filed statements, so naming it correctly protects the claim.
+
+Statement tables are printed at a scale, stated in the caption -- '$ in Thousands', '$ in Millions'. Apply
+it to the claim: write the figure as a reader reads it, '$4.64 billion' and not '$4,640,280', in the claim
+text and in `numeric_value`, with a matching `numeric_unit` such as 'USD billions'. A figure copied off the
+table unscaled is a thousand times wrong and is thrown out for disagreeing with the line it came from.
+
+The anchor is the opposite: copy it exactly as printed, scale and all. For a table row that is the row
+itself -- 'Total revenues | $ 4,640,280 | $ 4,519,571' -- because the anchor has to be findable in the
+source, and the source says 4,640,280. So the claim reads '$4.64 billion' while the anchor beside it reads
+'4,640,280'. Both are right, and they do not have to agree with each other."""
 
 
 @dataclass

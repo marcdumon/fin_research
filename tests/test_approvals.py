@@ -7,7 +7,6 @@ those are checked end to end through the supervisor rather than only at the prim
 import asyncio
 from dataclasses import replace
 from datetime import date
-from pathlib import Path
 
 import pytest
 import respx
@@ -227,14 +226,14 @@ async def test_a_downgraded_step_runs_on_the_cheaper_model(tmp_path, filing_sour
     assert route.call_count > 0
 
 
-def test_the_gate_prompt_names_the_cheaper_model():
+def test_the_gate_prompt_names_the_cheaper_model(tmp_path):
     """The button can only offer an alternative if the request says what it is."""
     from fin_research.agents.base import RunContext
     from fin_research.config import Config
     from fin_research.core.supervisor import _gate_prompt
 
-    cfg = Config()
-    with State(Path('/tmp') / 'gate-prompt-test.sqlite') as store:
+    cfg = Config(data_root=tmp_path)
+    with State(tmp_path / 'state.sqlite') as store:
         run_id = store.start_run('AAPL', None, date(2026, 9, 20), 2.0)
         ctx = RunContext(cfg=cfg, state=store, client=None, run_id=run_id,
                          ticker='AAPL', as_of=date(2026, 9, 20))

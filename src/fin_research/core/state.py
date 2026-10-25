@@ -114,6 +114,19 @@ CREATE TABLE IF NOT EXISTS approvals (
     decided_at   TEXT,
     decision     TEXT
 );
+
+-- What the analyst concluded, as distinct from what the agents found. A run produces a note; this
+-- records what was decided about it, which is the thing that makes the dashboard a workflow rather than a
+-- viewer. Here rather than in DuckDB because DuckDB takes one writer at a time, and a patrol holding that
+-- lock must never be the reason recording a decision fails.
+CREATE TABLE IF NOT EXISTS verdicts (
+    ticker      TEXT PRIMARY KEY,
+    verdict     TEXT NOT NULL,
+    conviction  TEXT,
+    note        TEXT,
+    run_id      TEXT,
+    reviewed_at TEXT NOT NULL
+);
 """
 
 
@@ -379,3 +392,21 @@ class State:
         if run_id:
             return self.query("SELECT * FROM approvals WHERE status = 'pending' AND run_id = ?", (run_id,))
         return self.query("SELECT * FROM approvals WHERE status = 'pending'")
+
+    def record_verdict(self, ticker: str, verdict: str, conviction: str | None = None,
+                       note: str | None = None, run_id: str | None = None) -> None:
+        """Record what was decided about a company, replacing any earlier decision.
+
+        One row per company rather than a history: the question the dashboard asks is what you think now.
+        The runs behind it are already kept in full, so the reasoning is not lost by overwriting the answer.
+        """
+        self._write(
+            'INSERT INTO verdicts (ticker, verdict, conviction, note, run_id, reviewed_at) '
+            'VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(ticker) DO UPDATE SET '
+            'verdict = excluded.verdict, conviction = excluded.conviction, note = excluded.note, '
+            'run_id = excluded.run_id, reviewed_at = excluded.reviewed_at',
+            (ticker.upper(), verdict, conviction, note, run_id, _now()))
+
+    def verdicts(self) -> dict[str, sqlite3.Row]:
+        """Every recorded decision, by ticker."""
+        return {row['ticker']: row for row in self.query('SELECT * FROM verdicts')}

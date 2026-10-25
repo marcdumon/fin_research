@@ -72,11 +72,34 @@ def index() -> dict:
 
 
 def test_a_cited_number_resolves_to_exact_offsets(index):
+    """A number alone locates the text. Nothing corroborates that it is the text the claim was about."""
     evidence = verify_evidence(_cite(2), {'d1': SourceText(TEXT)}, index)
     assert evidence.is_grounded
-    assert evidence.match_kind is MatchKind.EXACT
+    assert evidence.match_kind is MatchKind.POSITIONAL
     assert TEXT[evidence.char_start:evidence.char_end] == evidence.matched_text
     assert 'retail stores' in evidence.matched_text
+
+
+def test_an_anchor_inside_the_cited_passage_confirms_the_number(index):
+    """What restores the check: the agent shows a few words of the passage it says it read."""
+    evidence = verify_evidence(_cite(2, 'retail stores'), {'d1': SourceText(TEXT)}, index)
+    assert evidence.match_kind is MatchKind.EXACT
+    assert TEXT[evidence.char_start:evidence.char_end] == 'retail stores'
+
+
+def test_an_anchor_from_a_different_passage_moves_the_citation_to_where_it_belongs(index):
+    """A quote is checkable and a number is not, so a mistyped number loses to the words beside it."""
+    evidence = verify_evidence(_cite(2, 'designs, manufactures and markets smartphones'),
+                               {'d1': SourceText(TEXT)}, index)
+    assert evidence.is_grounded
+    assert TEXT[evidence.char_start:evidence.char_end] == 'designs, manufactures and markets smartphones'
+
+
+def test_an_anchor_found_nowhere_fails_even_with_a_real_number(index):
+    """The number exists, so the old code called this exact. The words prove the passage was never read."""
+    evidence = verify_evidence(_cite(2, 'guarantees a forty percent increase in sales'),
+                               {'d1': SourceText(TEXT)}, index)
+    assert not evidence.is_grounded
 
 
 def test_a_number_that_does_not_exist_is_rejected(index):
@@ -127,3 +150,20 @@ def test_numbering_adds_little_to_the_prompt():
     text = split(document).by_item('1').text(document.text)
     rendered = PassageIndex.build('d1', text).render()
     assert len(rendered) < len(text) * 1.1
+
+
+def test_a_figure_can_be_its_own_anchor(index):
+    """The natural anchor for a number is the number. Nine characters, and it was thrown out for brevity."""
+    text = 'Total revenues | $ 4,640,280 | $ 4,519,571 | $ 4,283,758 |'
+    cited = {'d1': PassageIndex.build('d1', text)}
+    evidence = verify_evidence(EvidenceRequest(document_id='d1', passage_id=1, quoted_text='4,519,571'),
+                               {'d1': SourceText(text)}, cited)
+
+    assert evidence.is_grounded
+    assert evidence.match_kind is MatchKind.EXACT
+    assert text[evidence.char_start:evidence.char_end] == '4,519,571'
+
+
+def test_a_short_anchor_is_not_enough_on_its_own(index):
+    """The length rule still holds where it was meant to: searching a whole document for a few characters."""
+    assert not verify_evidence(_cite(None, '4,519,571'), {'d1': SourceText(TEXT)}, index).is_grounded

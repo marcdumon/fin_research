@@ -22,11 +22,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from fin_research import paths
 from fin_research.config import Config, read
 from fin_research.core.state import State
 from fin_research.ingest import store as store_module
+from fin_research.web import companies as companies_module
 from fin_research.web.events import run_snapshot, stream
 
 log = logging.getLogger(__name__)
@@ -38,18 +40,34 @@ DIAGNOSTIC_RUN = 'schema-check'
 
 
 class _NoCacheIndex(StaticFiles):
-    """Static files, except that the entry page is never cached.
+    """Static files, except that the entry page is never cached and unknown paths fall back to it.
 
     Asset filenames carry a content hash and can be cached forever, but `index.html` names which assets to
     load. Letting a browser cache it means a rebuilt front end keeps serving the previous bundle, and the
     symptom is a page that looks fine while behaving like older code -- which cost two debugging sessions
     before the cause was obvious.
+
+    The fallback is what makes a company a real address. `/c/VSAT` is a route inside the application, not a
+    file on disk, so serving files alone answers it with 404 and reloading the page a colleague was sent
+    breaks it. Anything that is not an asset and does not exist is handed the entry page, which then reads
+    the path itself.
     """
 
     async def get_response(self, path: str, scope):
-        """Serve normally, then forbid caching of the entry page."""
-        response = await super().get_response(path, scope)
-        if path in ('.', '', 'index.html'):
+        """Serve normally, falling back to the entry page, and never let that page be cached."""
+        served_index = path in ('.', '', 'index.html')
+        try:
+            response = await super().get_response(path, scope)
+        except StarletteHTTPException as missing:
+            # A path with no dot in its last segment is a route, not a missing asset. An asset that
+            # is genuinely absent must still 404, or a stale bundle reference returns HTML and the browser
+            # reports a syntax error in what it thought was JavaScript.
+            if missing.status_code != 404 or path.startswith('assets/') or '.' in path.rsplit('/', 1)[-1]:
+                raise
+            response = await super().get_response('index.html', scope)
+            served_index = True
+
+        if served_index:
             response.headers['Cache-Control'] = 'no-store, must-revalidate'
         return response
 
@@ -85,6 +103,15 @@ class Launch(BaseModel):
     ticker: str
     budget_usd: float = 2.0
     gate_tiers: list[str] = []
+
+
+class Verdict(BaseModel):
+    """What the analyst concluded about a company."""
+
+    verdict: Literal['buy', 'watch', 'pass', 'reject']
+    conviction: Literal['low', 'medium', 'high'] | None = None
+    note: str | None = None
+    run_id: str | None = None
 
 
 def create_app(cfg: Config | None = None) -> FastAPI:
@@ -286,6 +313,11 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             store.finish_run(run_id, 'done')
         return results
 
+    # Kept so a background job can be asked whether it has finished. Asking the operating system
+    # whether the pid exists is not the same question: a finished child stays in the process table until its
+    # parent collects it, so that check reports a completed patrol as running indefinitely.
+    jobs: dict[int, subprocess.Popen] = {}
+
     def _spawn(command: list[str], name: str) -> dict:
         """Start a background command and keep its output.
 
@@ -299,7 +331,17 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         handle = log_file.open('w')
         process = subprocess.Popen([sys.executable, '-m', *command], cwd=paths.PROJECT_ROOT,
                                    stdout=handle, stderr=subprocess.STDOUT)
+        jobs[process.pid] = process
         return {'pid': process.pid, 'log': str(log_file)}
+
+    @app.get('/api/jobs/{pid}')
+    def job_status(pid: int) -> dict:
+        """Whether a background job started from here is still running, and how it ended if not."""
+        process = jobs.get(pid)
+        if process is None:
+            raise HTTPException(404, f'no job {pid} was started by this server')
+        code = process.poll()
+        return {'pid': pid, 'running': code is None, 'exit_code': code}
 
     @app.get('/api/screens')
     def list_screens() -> list[dict]:
@@ -331,11 +373,16 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         when = date.fromisoformat(as_of) if as_of else date.today()
         con = store_module.connect(settings, read_only=True)
         try:
-            if not settings.investalyze_db or not store_module.attach_market_data(con, settings.investalyze_db):
+            if not companies_module.open_market(con, settings):
                 raise HTTPException(503, 'screening needs the market database, which could not be attached')
             table = factors.compute(con, when)
+            # The date the prices actually come from. Asked for today, a screen reads the latest close
+            # the market database holds, which can be days older; saying 'as of today' would misstate it.
+            prices_row = con.execute(f'SELECT max(Date) FROM {store_module.MARKET_ALIAS}.prices WHERE Date <= ?',
+                                     [when]).fetchone()
         finally:
             con.close()
+        prices_as_of = str(prices_row[0])[:10] if prices_row and prices_row[0] else None
 
         result = rules.apply(screens[name], table)
         columns = ['Ticker', 'name', 'sector', 'market_cap', 'earnings_yield', 'fcf_yield', 'roe',
@@ -343,8 +390,26 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         present = [c for c in columns if c in result.survivors.columns]
         survivors = result.survivors[present].where(result.survivors[present].notna(), None)
 
-        return {'screen': name, 'as_of': str(when), 'considered': result.considered,
+        return {'screen': name, 'as_of': str(when), 'prices_as_of': prices_as_of, 'considered': result.considered,
                 'dropped': result.dropped, 'survivors': survivors.to_dict('records')}
+
+    @app.get('/api/screens/{name}/triage')
+    def screen_triage(name: str) -> dict:
+        """What the most recent read of a screen's survivors concluded about each one.
+
+        The funnel spends money reading the survivors and records a verdict per company, and nothing showed
+        them: the result of a paid step was reachable only by opening the database. Returned while the funnel
+        is still running too, since verdicts are recorded as each company is read.
+        """
+        with state() as store:
+            runs = store.query('SELECT run_id, status, spend_usd, started_at FROM runs WHERE ticker = ? '
+                               'ORDER BY started_at DESC LIMIT 1', (f'screen:{name}',))
+            if not runs:
+                return {'run_id': None, 'status': None, 'spend_usd': 0.0, 'started_at': None, 'verdicts': []}
+            run = runs[0]
+            verdicts = [artifact['payload'] for artifact in store.load_artifacts(run['run_id'], 'Triage')]
+        return {'run_id': run['run_id'], 'status': run['status'], 'spend_usd': run['spend_usd'],
+                'started_at': run['started_at'], 'verdicts': verdicts}
 
     @app.post('/api/screens/funnel')
     def run_funnel(request: Funnel) -> dict:
@@ -395,6 +460,131 @@ def create_app(cfg: Config | None = None) -> FastAPI:
             'results': [{'name': r.name, 'period_end': str(r.period_end), 'status': r.status.value,
                          'detail': r.detail} for r in report.results],
         }
+
+    # --- companies ---------------------------------------------------------------------------------
+    # The workbench's reads. A company is assembled from both stores: the filings and prices live in
+    # DuckDB, what was concluded lives in SQLite, and neither can be joined to the other in one query.
+
+    def _company_con():
+        """A read-only analytical connection with the market database attached where possible."""
+        con = store_module.connect(settings, read_only=True)
+        return con, companies_module.open_market(con, settings)
+
+    @app.get('/api/companies')
+    def list_companies() -> list[dict]:
+        """Every company with research or a place on the watchlist, most in need of attention first."""
+        with state() as store:
+            researched = companies_module.research_state(store)
+
+        con, attached = _company_con()
+        try:
+            watched, alerts = companies_module.watch_state(con)
+            found = [companies_module.company_row(con, ticker, attached, researched.get(ticker, {}), watched,
+                                                  alerts)
+                     for ticker in sorted(set(researched) | watched)]
+        finally:
+            con.close()
+
+        # Ordered by what deserves a look: unread alerts, then the companies gone longest unreviewed.
+        found.sort(key=lambda c: (-c['open_alerts'], c['reviewed_at'] or '', c['ticker']))
+        return found
+
+    @app.get('/api/companies/{ticker}')
+    def get_company(ticker: str) -> dict:
+        """One company: what it is, what it is worth, and where its research stands."""
+        symbol = ticker.upper()
+        with state() as store:
+            researched = companies_module.research_state(store, [symbol]).get(symbol, {})
+
+        con, attached = _company_con()
+        try:
+            watched, alerts = companies_module.watch_state(con)
+            row = companies_module.company_row(con, symbol, attached, researched, watched, alerts)
+            row['recent_filings'] = companies_module.filing_history(con, symbol, limit=5)
+        finally:
+            con.close()
+        return row
+
+    @app.get('/api/companies/{ticker}/prices')
+    def get_prices(ticker: str, years: int = companies_module.DEFAULT_PRICE_YEARS) -> dict:
+        """Daily bars with a marker on every filing date."""
+        con, attached = _company_con()
+        try:
+            return companies_module.price_series(con, ticker.upper(), years, attached)
+        finally:
+            con.close()
+
+    @app.get('/api/companies/{ticker}/fundamentals')
+    def get_fundamentals(ticker: str) -> dict:
+        """The reported figures as annual series, most recently filed value per period."""
+        con, _ = _company_con()
+        try:
+            return companies_module.fundamentals(con, ticker.upper())
+        finally:
+            con.close()
+
+    @app.get('/api/companies/{ticker}/filings')
+    def get_filings(ticker: str, limit: int = 60) -> list[dict]:
+        """What has been ingested for a company."""
+        con, _ = _company_con()
+        try:
+            return companies_module.filing_history(con, ticker.upper(), limit)
+        finally:
+            con.close()
+
+    @app.post('/api/companies/{ticker}/verdict')
+    def set_verdict(ticker: str, decision: Verdict) -> dict:
+        """Record what you concluded. The one write outside a live run."""
+        with state() as store:
+            store.record_verdict(ticker.upper(), decision.verdict, decision.conviction,
+                                 decision.note, decision.run_id)
+        return {'ticker': ticker.upper(), 'verdict': decision.verdict}
+
+    @app.get('/api/companies/{ticker}/note')
+    def get_company_note(ticker: str) -> dict:
+        """The research note for a company's most recent completed run, with every claim resolved."""
+        from fin_research.report.note import as_json, latest_note
+
+        con, _ = _company_con()
+        try:
+            with state() as store:
+                note = latest_note(store, ticker.upper(), con)
+        finally:
+            con.close()
+        if note is None:
+            raise HTTPException(404, f'no completed research for {ticker.upper()}')
+        return as_json(note)
+
+    @app.get('/api/runs/{run_id}/note')
+    def get_run_note(run_id: str) -> dict:
+        """The research note one particular run produced."""
+        from fin_research.report.note import as_json, build_note
+
+        con, _ = _company_con()
+        try:
+            with state() as store:
+                note = build_note(store, run_id, con)
+        finally:
+            con.close()
+        if note is None:
+            raise HTTPException(404, f'run {run_id} produced no report')
+        return as_json(note)
+
+    @app.get('/api/sources/{source_id}')
+    def get_source(source_id: str, start: int | None = None, end: int | None = None,
+                   context: int = 800) -> dict:
+        """The filing text behind a citation, with the cited span located inside the excerpt.
+
+        The endpoint that makes a citation checkable by a person rather than only by the verifier.
+        """
+        con, _ = _company_con()
+        try:
+            found = companies_module.source_text(con, source_id, start, end, context)
+        finally:
+            con.close()
+        if found is None:
+            raise HTTPException(404, f'no source {source_id}')
+        return found
 
     @app.get('/api/agents')
     def list_agents() -> list[dict]:

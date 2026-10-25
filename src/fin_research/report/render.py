@@ -1,25 +1,36 @@
 """Render a finished report as markdown, with every claim traceable to the filing it came from.
 
 Citations are numbered inline and listed in full at the end, each giving the document, the character range and
-the text that was actually matched. That appendix is the difference between a research note and an opinion:
-anyone reading it can go to the source and check, and so can a later run.
+the text that was actually matched. A citation to a reported figure has no character range: it names the
+statement line instead, and shows how the claim put it, which is the agent's wording rather than the filing's.
+That appendix is the difference between a research note and an opinion: anyone reading it can go to the source
+and check, and so can a later run.
 
 The footer states the groundedness rate and how the matches were obtained. It is reported honestly, including
 when nothing could be checked -- a note built entirely from judgement gets no score rather than a perfect one,
 because a perfect score on nothing is the most misleading number the system could print.
 """
 
+import logging
+import re
 from dataclasses import dataclass
 
-from fin_research.core.schemas import Claim, MatchKind, Report, Valuation
-from fin_research.core.verification import SourceText, verify_evidence
+from fin_research.core.schemas import MatchKind, Report, Valuation
+from fin_research.core.verification import ClaimVerdict
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
 class Citations:
-    """Numbers each distinct piece of evidence once, in the order it is first cited."""
+    """Numbers each distinct piece of evidence once, in the order it is first cited.
 
-    sources: dict[str, SourceText]
+    The evidence numbered here is what the verifier resolved when the claim was made, carried through rather
+    than looked up again. Re-resolving at this point would be a second, weaker check -- the renderer has the
+    source text but not the passage tables the verifier used -- and the appendix would then describe a
+    verification that governed nothing, while the footer claims it governed everything.
+    """
+
     _numbers: dict[str, int] = None  # type: ignore[assignment]
     _entries: list[tuple[int, str, str, str]] = None  # type: ignore[assignment]
 
@@ -28,12 +39,10 @@ class Citations:
         self._numbers = {}
         self._entries = []
 
-    def mark(self, claim: Claim) -> str:
+    def mark(self, verdict: ClaimVerdict) -> str:
         """Citation markers for one claim, e.g. ' [1][2]', or '' when it has none that resolve."""
         markers = []
-        for request in claim.evidence:
-            evidence = verify_evidence(request, self.sources)
-
+        for evidence in verdict.evidence:
             if not evidence.is_grounded:
                 continue
 
@@ -64,14 +73,41 @@ class Citations:
         return '\n'.join(lines)
 
 
-def _claims(claims: list[Claim], citations: Citations) -> str:
+# A debater names the checked claims its reasoning rests on, and writes their identifiers into its own text:
+# 'Based on [95988326] and [6f95ac32], the turnaround is real'. One or several, in one bracket or many.
+REFERENCE = re.compile(r'\[([0-9a-f]{8}(?:\s*,\s*[0-9a-f]{8})*)\]')
+
+
+def _resolve_references(text: str, citations: Citations, verdicts: dict[str, ClaimVerdict]) -> str:
+    """Turn the claim identifiers in a claim's text into the citation numbers of the claims they name.
+
+    An argument that rests on a checked claim inherits that claim's sources, which is the whole reason the
+    debate is given identifiers rather than filing text. Left alone the identifiers reach the reader as
+    meaningless hexadecimal; resolved, they become citations pointing at the passages behind the reasoning.
+    An identifier naming nothing is removed rather than shown -- it cites nothing, so it says nothing.
+    """
+    def replace(match: re.Match) -> str:
+        markers = ''.join(citations.mark(verdicts[identifier])
+                          for identifier in (i.strip() for i in match.group(2).split(','))
+                          if identifier in verdicts)
+        # The space before the bracket belongs to the citation when there is one, and to nothing when the
+        # reference resolved to nothing -- otherwise a dropped reference leaves a gap mid-sentence.
+        return f'{match.group(1)}{markers}' if markers else ''
+
+    return re.sub(r'(\s*)' + REFERENCE.pattern, replace, text).strip()
+
+
+def _claims(verdicts: list[ClaimVerdict], citations: Citations,
+            known: dict[str, ClaimVerdict] | None = None) -> str:
     """Render a list of claims as bullets, each carrying its citation markers."""
-    if not claims:
+    if not verdicts:
         return '_None supported by the evidence._'
     lines = []
-    for claim in claims:
+    for verdict in verdicts:
+        claim = verdict.claim
         kind = '' if claim.claim_type.value in ('fact', 'numeric') else f' _({claim.claim_type.value})_'
-        lines.append(f'- {claim.text}{kind}{citations.mark(claim)}')
+        text = _resolve_references(claim.text, citations, known or {})
+        lines.append(f'- {text}{kind}{citations.mark(verdict)}')
     return '\n'.join(lines)
 
 
@@ -97,17 +133,30 @@ def _valuation(valuation: Valuation | None) -> str:
     return '\n'.join(lines)
 
 
-def render(report: Report, sources: dict[str, SourceText], groundedness: float | None = None,
+def render(report: Report, verdicts: dict[str, ClaimVerdict], groundedness: float | None = None,
            cost_usd: float | None = None, match_kinds: dict[str, int] | None = None,
            numeric: dict[str, int] | None = None, valuation: Valuation | None = None) -> str:
     """Render the whole report.
 
     Order follows how a note is actually read: the conclusion first, then the numbers, then both sides of the
     argument, then what would make it wrong.
-    """
-    citations = Citations(sources=sources)
 
-    numbers = _claims(report.numbers, citations) if report.numbers \
+    The report carries claim identifiers, which are resolved here against what earlier stages produced and
+    verified. An identifier naming nothing is dropped: it means the synthesiser invented a reference, and a
+    fabricated reference is exactly what the citation contract exists to keep out of the note.
+    """
+    citations = Citations()
+
+    def resolve(identifiers: list[str]) -> list[ClaimVerdict]:
+        """Turn claim identifiers into the verified claims they name, dropping any that name nothing."""
+        missing = [i for i in identifiers if i not in verdicts]
+        if missing:
+            log.warning(f'{len(missing)} of {len(identifiers)} claim reference(s) match no verified claim: '
+                        + ', '.join(missing))
+        return [verdicts[identifier] for identifier in identifiers if identifier in verdicts]
+
+    figures = resolve(report.numbers)
+    numbers = _claims(figures, citations, verdicts) if figures \
         else '_No financial findings survived verification._'
 
     disagreements = '\n\n'.join(
@@ -131,11 +180,11 @@ def render(report: Report, sources: dict[str, SourceText], groundedness: float |
 
 ## The constructive case
 
-{_claims(report.bull_case, citations)}
+{_claims(resolve(report.bull_case), citations, verdicts)}
 
 ## The sceptical case
 
-{_claims(report.bear_case, citations)}
+{_claims(resolve(report.bear_case), citations, verdicts)}
 
 ## What would make this wrong
 

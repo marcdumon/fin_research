@@ -13,7 +13,7 @@ consensus.
 
 from dataclasses import dataclass
 
-from fin_research.agents.base import Analyst, RunContext, findings_digest, register
+from fin_research.agents.base import Analyst, RunContext, claim_pool, findings_digest, register, truncate
 from fin_research.agents.debate import thesis_digest
 from fin_research.core.schemas import Finding, Report, Thesis, Valuation
 
@@ -32,6 +32,7 @@ class ValuationAnalyst(Analyst):
     def build_prompt(self, ctx: RunContext, limit: int, **inputs: object) -> str:
         """Compose a prompt demanding scenarios and explicit assumptions, not a point estimate."""
         findings: list[Finding] = list(inputs['findings'])  # type: ignore[arg-type]
+        statements = str(inputs.get('statements') or '')
         price = inputs.get('price')
         price_line = f'Current share price: {price}' if price else 'Current share price: not available'
 
@@ -47,6 +48,14 @@ A single number would hide the only interesting part, which is what has to be tr
   you have not thought about which is likelier.
 - Name the valuation method you used in `method`. If the available information does not support a credible
   valuation, say so in the method field and give wide scenarios rather than false precision.
+
+The company's own statements are below. Cash, debt, share count, revenue and margins are in them: take
+those figures from the statements and apply the scale in the caption. Do not estimate a figure the
+statements report. Where you must assume something they do not report, say so in that assumption's
+rationale, in those words.
+
+--- REPORTED STATEMENTS ---
+{truncate(statements, limit) if statements else '(not available)'}
 
 --- FINDINGS ---
 {findings_digest(findings, limit=20)}"""
@@ -65,22 +74,28 @@ class Synthesiser(Analyst):
     max_output_tokens: int = 12_288
 
     def build_prompt(self, ctx: RunContext, limit: int, **inputs: object) -> str:
-        """Compose the final prompt from the verified findings, both theses and the valuation."""
+        """Compose the final prompt from the verified claims, both theses and the valuation."""
         findings: list[Finding] = list(inputs['findings'])  # type: ignore[arg-type]
         bull: Thesis | None = inputs.get('bull')  # type: ignore[assignment]
         bear: Thesis | None = inputs.get('bear')  # type: ignore[assignment]
         rebuttal: Thesis | None = inputs.get('rebuttal')  # type: ignore[assignment]
         valuation = inputs.get('valuation')
+        pool, _ = claim_pool(findings, [bull, bear, rebuttal])
 
         return f"""Company: {ctx.ticker}. Write the research note as of {ctx.as_of}.
 
-Everything below has already been checked: every claim's quotation was confirmed against the filing. Claims
-that failed have been removed, so an argument you expected to see may be absent because it could not be
-supported.
+Everything below has already been checked against the filings. Claims that failed have been removed, so an
+argument you expected to see may be absent because it could not be supported.
+
+Build the note out of the claims listed, by their identifiers. Put identifiers in `numbers`, `bull_case` and
+`bear_case` -- not text. Do not write new claims: a claim you write here carries no evidence and will be
+dropped, and the ones below already carry theirs.
 
 Your job:
 1. State a thesis, with a direction and an honest confidence level.
-2. Carry forward the strongest claims from each side, keeping their evidence intact.
+2. Choose which claims belong in the note, and on which side. Use their identifiers. `numbers` is for
+   claims about the reported figures -- what revenue, margins, cash and debt did. A claim about contracts or
+   competition belongs in one of the two cases, not there.
 3. Rule on the disputes. Where the two sides read the same evidence differently, decide -- and where the
    evidence genuinely does not settle it, record it as an unresolved disagreement with `resolved` false
    rather than picking a side for the sake of tidiness.
@@ -89,8 +104,8 @@ Your job:
 Confidence must reflect the evidence. If the sources were thin, or the debate exposed a real hole, say
 'low'. A confident note on weak evidence is worse than no note.
 
---- VERIFIED FINDINGS ---
-{findings_digest(findings, limit=20)}
+--- CLAIMS YOU MAY USE ---
+{truncate(pool, limit)}
 
 --- CONSTRUCTIVE CASE ---
 {thesis_digest(bull)}

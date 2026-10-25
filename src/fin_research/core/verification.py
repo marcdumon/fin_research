@@ -38,6 +38,12 @@ ZERO_WIDTH = frozenset(map(chr, (0x200b, 0x200c, 0x200d, 0x2060, 0xfeff, 0x00ad)
 
 # Quotes shorter than this are not evidence -- 'revenue' appears everywhere and proves nothing.
 MIN_QUOTE_CHARS = 12
+# Inside a passage the agent already named, the bar is lower. The length rule guards against a short
+# string matching by accident somewhere in a hundred thousand characters; a few hundred characters of
+# already-cited text is not that. It has to be lower, because the natural anchor for a figure is the figure:
+# a claim about the prior year's revenue anchors on '4,519,571', nine characters, and was thrown out for
+# brevity while the same claim about this year survived on a longer one.
+MIN_ANCHOR_CHARS = 4
 
 # Scale words a model uses when restating a figure it read as a full number.
 SCALES = {
@@ -116,12 +122,14 @@ class SourceText:
             self._folds[level] = fold(self.text, level)
         return self._folds[level]
 
-    def locate(self, quote: str) -> Match | None:
+    def locate(self, quote: str, min_chars: int = MIN_QUOTE_CHARS) -> Match | None:
         """Find `quote` in this document, trying progressively more forgiving comparisons.
 
         Returns None when the quote is absent at every rung, which is the signal that the model invented it.
+        The minimum length is a parameter because it means different things at different scales: see
+        `MIN_ANCHOR_CHARS`.
         """
-        if not quote or len(quote.strip()) < MIN_QUOTE_CHARS:
+        if not quote or len(quote.strip()) < min_chars:
             return None
 
         for level, kind in _LADDER:
@@ -228,46 +236,91 @@ class FactIndex:
         stated = (claim.numeric_value or 0) * parse_scale(claim.numeric_unit)
         return NumericVerdict.CONTRADICTED, min(reported, key=lambda v: abs(abs(v) - abs(stated)))
 
+    def implied_scale(self, claim: Claim) -> float | None:
+        """The power of a thousand at which a rejected figure would have matched, if there is one.
 
-def _evidence_id(request: EvidenceRequest, match: Match | None) -> str:
-    """Content-addressed id, so the same citation from two agents collapses to one row."""
+        A statement table is printed 'in thousands' and a model copies the printed figure without applying
+        the caption. The claim is still rejected -- a note reading '$3,926' where the company earned $3.9
+        million is wrong prose whatever the intent -- but the rejection is a different fault from stating a
+        wrong number, and saying which one it is turns a prompt problem into something visible.
+        """
+        reported = self.by_metric.get(claim.metric or '')
+        if not reported or claim.numeric_value is None:
+            return None
+        for scale in (1e3, 1e6, 1e9):
+            scaled = claim.model_copy(update={'numeric_value': claim.numeric_value * scale,
+                                              'numeric_unit': None})
+            if any(verify_numeric(scaled, v) or verify_numeric(scaled, abs(v)) for v in reported):
+                return scale
+        return None
+
+
+def _evidence_id(request: EvidenceRequest, char_start: int | None, char_end: int | None) -> str:
+    """Content-addressed id, so the same citation from two agents collapses to one row.
+
+    Keyed on the resolved span rather than on what was offered, so the same sentence cited by quotation and
+    by passage number is one citation. Unmatched evidence has no span to key on and falls back to what was
+    offered, including the passage number -- without it, two different passages of one document that both
+    failed to resolve would collide into a single citation.
+    """
     from fin_research.ingest.store import digest
-    if match is None:
-        return digest(request.document_id, request.section_id, request.quoted_text, 'unmatched')
-    return digest(request.document_id, match.char_start, match.char_end)
+    if char_start is None:
+        return digest(request.document_id, request.section_id, request.passage_id, request.quoted_text,
+                      request.fact_id, 'unmatched')
+    return digest(request.document_id, char_start, char_end)
 
 
 def verify_evidence(request: EvidenceRequest, sources: dict[str, SourceText],
-                    passages: dict[str, PassageIndex] | None = None) -> Evidence:
+                    passages: dict[str, PassageIndex] | None = None,
+                    facts: FactIndex | None = None) -> Evidence:
     """Resolve one piece of offered evidence into a confirmed record, matched or not.
 
-    A passage number resolves exactly, with no matching involved: the offsets come from the passage table.
-    A quotation still goes down the matching ladder, so an agent that quotes is held to the old standard.
+    A passage number gives offsets with no matching involved, so by itself it shows only that the number
+    exists. An anchor quoted beside it is what shows the agent read that passage: the anchor is looked for
+    inside the cited passage, and finding it there confirms both at once. An anchor that is not in the cited
+    passage but is elsewhere in the document relocates the citation -- a quote is checkable and a number is
+    not, so the quote wins. A number offered with no anchor still resolves, recorded as POSITIONAL, so the
+    note can say how much of it rests on numbers that nothing corroborated.
+
+    Evidence citing a reported figure names the metric, and the metric must be one the company actually
+    reported. Accepting any non-empty name was a hole in the contract the rest of this module enforces: a run
+    produced a claim citing a metric called FINDINGS -- the heading of its own prompt -- and it was recorded
+    as an exact match, because nothing looked.
 
     Evidence that names no document, or a document that was never ingested, is recorded as unmatched rather
     than skipped -- an unresolvable citation is exactly as suspect as a wrong one, and silently dropping it
     would flatter the groundedness figure.
     """
     if request.kind is not EvidenceKind.SPAN:
-        return Evidence(evidence_id=_evidence_id(request, None), kind=request.kind,
-                        match_kind=MatchKind.EXACT if request.fact_id else MatchKind.NONE,
-                        fact_id=request.fact_id, document_id=request.document_id)
+        reported = bool(request.fact_id and facts and facts.knows(request.fact_id))
+        return Evidence(evidence_id=_evidence_id(request, None, None), kind=request.kind,
+                        match_kind=MatchKind.EXACT if reported else MatchKind.NONE,
+                        fact_id=request.fact_id, document_id=request.document_id,
+                        quoted_text=request.quoted_text, matched_text=request.quoted_text if reported else None)
 
     index = (passages or {}).get(request.document_id or '')
     if request.passage_id is not None and index is not None:
         passage = index.get(request.passage_id)
         if passage is not None:
-            return Evidence(
-                evidence_id=_evidence_id(request, None), kind=EvidenceKind.SPAN, match_kind=MatchKind.EXACT,
-                document_id=request.document_id, section_id=request.section_id,
-                char_start=passage.char_start, char_end=passage.char_end,
-                quoted_text=request.quoted_text, matched_text=passage.text)
+            anchor = (SourceText(passage.text).locate(request.quoted_text or '', MIN_ANCHOR_CHARS)
+                      if request.quoted_text else None)
+            if anchor is not None or not request.quoted_text:
+                start = passage.char_start + anchor.char_start if anchor else passage.char_start
+                end = passage.char_start + anchor.char_end if anchor else passage.char_end
+                return Evidence(
+                    evidence_id=_evidence_id(request, start, end),
+                    kind=EvidenceKind.SPAN,
+                    match_kind=anchor.match_kind if anchor else MatchKind.POSITIONAL,
+                    document_id=request.document_id, section_id=request.section_id,
+                    char_start=start, char_end=end, quoted_text=request.quoted_text,
+                    matched_text=anchor.matched_text if anchor else passage.text)
 
     source = sources.get(request.document_id or '')
     match = source.locate(request.quoted_text or '') if source else None
 
     return Evidence(
-        evidence_id=_evidence_id(request, match),
+        evidence_id=_evidence_id(request, match.char_start if match else None,
+                                 match.char_end if match else None),
         kind=EvidenceKind.SPAN,
         match_kind=match.match_kind if match else MatchKind.NONE,
         document_id=request.document_id,
@@ -307,7 +360,7 @@ def verify_claim(claim: Claim, sources: dict[str, SourceText], facts: FactIndex 
     match what the company reported. Those are different failures. A model can quote a real sentence about
     revenue and state the wrong revenue, and span checking alone would pass it.
     """
-    evidence = tuple(verify_evidence(request, sources, passages) for request in claim.evidence)
+    evidence = tuple(verify_evidence(request, sources, passages, facts) for request in claim.evidence)
 
     if not claim.needs_evidence:
         return ClaimVerdict(claim=claim, evidence=evidence, grounded=True, reason='judgement, exempt by design')
@@ -323,9 +376,12 @@ def verify_claim(claim: Claim, sources: dict[str, SourceText], facts: FactIndex 
     numeric, reported = (facts.check(claim) if facts else (NumericVerdict.UNCHECKED, None))
     if numeric is NumericVerdict.CONTRADICTED:
         stated = (claim.numeric_value or 0) * parse_scale(claim.numeric_unit)
-        return ClaimVerdict(
-            claim=claim, evidence=evidence, grounded=False, numeric=numeric,
-            reason=f'states {claim.metric} of {stated:,.0f} but the filer reported {reported:,.0f}')
+        scale = facts.implied_scale(claim) if facts else None
+        detail = (f'states {claim.metric} of {stated:,.0f} but the filer reported {reported:,.0f}'
+                  if scale is None else
+                  f'states {claim.metric} of {stated:,.0f}, which is the reported figure divided by '
+                  f'{scale:,.0f}: a table scale was not applied')
+        return ClaimVerdict(claim=claim, evidence=evidence, grounded=False, numeric=numeric, reason=detail)
 
     reason = ('every citation resolved, and the figure matches what was reported'
               if numeric is NumericVerdict.CONFIRMED else 'every citation resolved')

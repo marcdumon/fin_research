@@ -80,12 +80,10 @@ async def _run(args: argparse.Namespace) -> int:
                   f'Spent ${summary.spend_usd:.4f} of ${summary.budget_usd:.2f}.')
             return 1
 
-        markdown = render(outcome.report, ctx.sources, groundedness=outcome.groundedness,
+        markdown = render(outcome.report, outcome.verdicts, groundedness=outcome.groundedness,
                           cost_usd=summary.spend_usd,
-                          match_kinds={k: v for result in outcome.results
-                                       for k, v in result.verification.match_kinds().items()},
-                          numeric={k: v for result in outcome.results
-                                   for k, v in result.verification.numeric_outcomes().items()},
+                          match_kinds=outcome.match_kinds,
+                          numeric=outcome.numeric_outcomes,
                           valuation=outcome.valuation)
 
         destination = args.out or paths.PROJECT_ROOT / 'reports' / f'{args.ticker}_{as_of}.md'

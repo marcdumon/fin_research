@@ -243,6 +243,38 @@ def store_facts(con: duckdb.DuckDBPyConnection, facts: list[Fact], ticker: str |
 
 
 # --- reading ------------------------------------------------------------------
+# The prefix of the identifier a filing's statements are cited under. They are several documents read as
+# one, so no single document's identifier describes them.
+STATEMENTS_PREFIX = 'statements:'
+
+
+def statements_source(con: duckdb.DuckDBPyConnection, accession: str) -> tuple[str, str] | None:
+    """A filing's financial statements as one source: its identifier and the text an agent reads.
+
+    The statement pages -- balance sheet, income statement, cash flow and the rest -- are joined into one
+    text so a claim can cite across the statements it reconciles. Citation offsets are therefore positions in
+    the joined text, and whatever shows a citation to a reader has to rebuild exactly that text. They used to
+    be cited under the first page's own identifier, so the viewer fetched the balance sheet alone: a revenue
+    figure from the income statement opened onto "Total liabilities and equity", at an offset past the end of
+    what it had fetched. Both the reader and the viewer come through here now, so they cannot disagree.
+    """
+    pages = con.execute("""
+        SELECT text FROM documents WHERE accession = ? AND doc_role = 'statements' ORDER BY filename
+    """, [accession]).fetchall()
+    if not pages:
+        return None
+    return f'{STATEMENTS_PREFIX}{accession}', '\n\n'.join(text for (text,) in pages)
+
+
+def first_statements_page(con: duckdb.DuckDBPyConnection, accession: str) -> str | None:
+    """The identifier statements were cited under before they had one of their own."""
+    row = con.execute("""
+        SELECT document_id FROM documents WHERE accession = ? AND doc_role = 'statements'
+        ORDER BY filename LIMIT 1
+    """, [accession]).fetchone()
+    return row[0] if row else None
+
+
 def section_text(con: duckdb.DuckDBPyConnection, section_id: str) -> str | None:
     """The text of one stored section, sliced from the document it was measured against."""
     row = con.execute("""

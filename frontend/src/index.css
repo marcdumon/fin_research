@@ -1,37 +1,133 @@
 @import 'tailwindcss';
 
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;450;500;600;700&display=swap');
+/* Self-hosted, because this application is otherwise entirely local: it reads a DuckDB file on disk
+   and talks to a server on loopback. A webfont pulled from a CDN made first paint wait on a third party and
+   left the whole typeface missing when the machine was offline. */
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
 
 @theme {
   --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
   --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
 
-  /* Cool paper rather than cream, so the tier ramp below reads as the only warmth on the page. */
-  --color-ground: #edf0f3;
-  --color-surface: #ffffff;
-  --color-ink: #1a2028;
-  --color-muted: #667382;
-  --color-rule: #d3dae1;
+  /* A type scale, rather than the seven arbitrary half-pixel sizes this file used to sanction.
+     Dense by intent: this is a screen for reading many figures at once, not an article. */
+  --text-micro: 10.5px;
+  --text-micro--line-height: 14px;
+  --text-tiny: 11.5px;
+  --text-tiny--line-height: 16px;
+  --text-small: 12.5px;
+  --text-small--line-height: 18px;
+  --text-base: 13.5px;
+  --text-base--line-height: 20px;
+  --text-lede: 15px;
+  --text-lede--line-height: 23px;
+  --text-title: 19px;
+  --text-title--line-height: 26px;
+  --text-display: 26px;
+  --text-display--line-height: 32px;
+  --text-hero: 38px;
+  --text-hero--line-height: 42px;
 
-  /* The product's organising idea: cost follows verifiability. This ramp is information, not decoration. */
-  --color-cheap: #3e7a5e;
-  --color-mid: #b5762a;
-  --color-expensive: #a03c3c;
+  /* Dark is the default. The ramp runs from the page back to the top-most raised surface, with
+     three text weights on top of it. Every value here is redefined for light further down. */
+  --color-ground: #0d1117;
+  --color-panel: #141a22;
+  --color-raised: #1b222c;
+  --color-rule: #262f3a;
+  --color-rule-strong: #384454;
+  --color-ink: #e3e8ef;
+  --color-muted: #8a97a8;
+  --color-faint: #5d6b7d;
 
-  /* Deliberately off the ramp: a dropped claim is not "expensive", and must never read as though it were. */
-  --color-dropped: #6b6480;
-  --color-link: #2a5fa8;
+  /* The product's organising idea: cost follows verifiability. This ramp is information, not
+     decoration. */
+  --color-cheap: #4f9c78;
+  --color-mid: #cf9445;
+  --color-expensive: #c25f5f;
+
+  /* Whether a claim was checked, and how. That this is knowable at all is the point of the system,
+     so it gets a palette of its own rather than borrowing the cost ramp's. */
+  --color-verified: #4f9c78;
+  --color-positional: #b08a3e;
+  --color-unverified: #8a6fae;
+
+  /* Which way the note leans. */
+  --color-constructive: #4f9c78;
+  --color-cautious: #c8843f;
+  --color-neutral: #7d8ba0;
+
+  /* Split out from the cost ramp: an error and an expensive model call used to be the same red, so
+     a failed call and a Sonnet call looked alike at a glance. */
+  --color-danger: #d45c5c;
+  --color-link: #5d9cec;
+  --color-accent: #5d9cec;
+
+  /* Markets, in the direction a terminal colours them. */
+  --color-up: #4f9c78;
+  --color-down: #c25f5f;
 }
 
-html { background: var(--color-ground); }
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  color-scheme: light;
+
+  --color-ground: #eef1f5;
+  --color-panel: #ffffff;
+  --color-raised: #f6f8fa;
+  --color-rule: #dce2e9;
+  --color-rule-strong: #c2ccd7;
+  --color-ink: #16202c;
+  --color-muted: #5b6878;
+  --color-faint: #8593a4;
+
+  --color-cheap: #2f7355;
+  --color-mid: #a86e23;
+  --color-expensive: #9c3b3b;
+
+  --color-verified: #2f7355;
+  --color-positional: #8c6a1e;
+  --color-unverified: #6a5490;
+
+  --color-constructive: #2f7355;
+  --color-cautious: #a2652c;
+  --color-neutral: #5f6d80;
+
+  --color-danger: #b23c3c;
+  --color-link: #1f5fbb;
+  --color-accent: #1f5fbb;
+
+  --color-up: #2f7355;
+  --color-down: #9c3b3b;
+}
+
+html {
+  background: var(--color-ground);
+}
 
 body {
   margin: 0;
   color: var(--color-ink);
   font-family: var(--font-sans);
-  /* Figures must align down a column; tabular numerals do that without a monospace face everywhere. */
+  font-size: var(--text-base);
+  line-height: var(--text-base--line-height);
+  /* Figures must align down a column; tabular numerals do that without a monospace face
+     everywhere. */
   font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
+}
+
+* {
+  /* The rail and the evidence panel scroll independently of the page, and a default scrollbar on a
+     dark surface reads as a bright seam down the edge of it. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-rule-strong) transparent;
 }
 
 /* Motion answers an action or marks arriving data. Nothing animates merely on load. */
@@ -40,9 +136,25 @@ body {
 }
 
 @keyframes land {
-  from { background-color: color-mix(in srgb, var(--color-link) 14%, transparent); }
+  from { background-color: color-mix(in srgb, var(--color-accent) 18%, transparent); }
   to   { background-color: transparent; }
 }
 .landed { animation: land 1.2s ease-out; }
 
-:focus-visible { outline: 2px solid var(--color-link); outline-offset: 2px; }
+@keyframes slide-in {
+  from { transform: translateX(10px); opacity: 0; }
+  to   { transform: translateX(0); opacity: 1; }
+}
+.slide-in { animation: slide-in 140ms ease-out; }
+
+:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+
+.cite {
+  /* A citation has to be visibly clickable without breaking the line it sits in. */
+  font-family: var(--font-mono);
+  font-size: var(--text-tiny);
+  vertical-align: 0.32em;
+  cursor: pointer;
+  color: var(--color-accent);
+}
+.cite:hover { text-decoration: underline; }

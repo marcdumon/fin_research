@@ -7,20 +7,29 @@ pressure is what stops a thesis being a list of reasons to buy.
 
 The length is fixed at bull, bear, bull rebuttal. There is no convergence test and no loop, and none should be
 added -- an unbounded debate between two models is a bill with no ceiling and no better an answer at the end
-of it. Both sides work from finding headlines rather than full evidence text, which keeps the argument
-grounded in what was actually found without paying to restate the whole corpus three times.
+of it.
+
+Both sides argue over claims that have already been checked, listed with their identifiers, rather than over
+the source text. That keeps the argument grounded in what was actually found without paying to restate the
+whole corpus three times -- and it settles what a debater is for. Asking one to quote the filings while
+showing it only summaries produced claims citing documents it had never seen, and every one was discarded: a
+whole stage of expensive reasoning thrown away for a fault in the prompt rather than in the argument.
 """
 
 from dataclasses import dataclass
 
-from fin_research.agents.base import Analyst, RunContext, findings_digest, register
+from fin_research.agents.base import Analyst, RunContext, claim_pool, register, truncate
 from fin_research.core.schemas import Finding, Thesis
 
 DEBATE_RULES = """
-Every claim you make must carry evidence, quoting the source verbatim with its document_id, exactly as the
-findings below do. A claim whose quote cannot be found in the source is discarded.
+You argue from the established claims listed below and nothing else. You have not been shown the filings, so
+you cannot quote them: a claim of yours that quotes a source is discarded, because the quotation cannot be
+checked. Leave `evidence` empty and name the claims you are reasoning from by their identifiers, in your own
+claim text -- 'on [4f2a9c01] and [9b1e2d77], the margin story rests on a contract that expires next year'.
 
-Mark opinions as claim_type 'judgement' and reasoning as 'inference'. Do not dress an opinion as a fact.
+Mark reasoning as claim_type 'inference' and opinion as 'judgement'. Do not restate an established claim as
+though it were your own; the note already has it, and your job is what follows from it.
+
 In `falsifiers`, name the specific, observable conditions that would show your case to be wrong. Be concrete:
 "gross margin falls below 40% for two consecutive quarters" is a falsifier; "if things get worse" is not.
 """.strip()
@@ -39,16 +48,17 @@ class BullAnalyst(Analyst):
         """Compose the opening argument, or the rebuttal when the bear case is supplied."""
         findings: list[Finding] = list(inputs['findings'])  # type: ignore[arg-type]
         opposing = inputs.get('opposing')
+        pool, _ = claim_pool(findings)
 
         if opposing is None:
             return f"""Company: {ctx.ticker}, as of {ctx.as_of}.
 
-Build the strongest honest case that this company is undervalued or improving, using only the findings below.
+Build the strongest honest case that this company is undervalued or improving, from the claims below.
 
 {DEBATE_RULES}
 
---- FINDINGS ---
-{findings_digest(findings, limit=20)}"""
+--- ESTABLISHED CLAIMS ---
+{truncate(pool, limit)}"""
 
         return f"""Company: {ctx.ticker}, as of {ctx.as_of}.
 
@@ -64,8 +74,8 @@ arguing rather than analysing.
 --- THE BEAR CASE ---
 {opposing}
 
---- FINDINGS ---
-{findings_digest(findings, limit=20)}"""
+--- ESTABLISHED CLAIMS ---
+{truncate(pool, limit)}"""
 
 
 @dataclass
@@ -81,23 +91,24 @@ class BearAnalyst(Analyst):
         """Compose the sceptical case against the argument already made."""
         findings: list[Finding] = list(inputs['findings'])  # type: ignore[arg-type]
         opposing = inputs.get('opposing', '')
+        pool, _ = claim_pool(findings)
 
         return f"""Company: {ctx.ticker}, as of {ctx.as_of}.
 
 Build the strongest honest case that this company is overvalued, deteriorating, or riskier than it appears,
-using only the findings below. The constructive case is given; attack it where it is weak.
+from the claims below. The constructive case is given; attack it where it is weak.
 
-Each claim must either cite evidence the constructive case ignored, or dispute one of its claims -- put the
-disputed claim's text in `attacks`. Do not manufacture a disagreement where you actually agree; saying the
-constructive case is right on a point is useful information.
+Each claim must either reason from an established claim the constructive case passed over, or dispute one of
+its claims -- put the disputed claim's text in `attacks`. Do not manufacture a disagreement where you
+actually agree; saying the constructive case is right on a point is useful information.
 
 {DEBATE_RULES}
 
 --- THE CONSTRUCTIVE CASE ---
 {opposing}
 
---- FINDINGS ---
-{findings_digest(findings, limit=20)}"""
+--- ESTABLISHED CLAIMS ---
+{truncate(pool, limit)}"""
 
 
 bull = register(BullAnalyst(

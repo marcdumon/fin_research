@@ -58,10 +58,10 @@ export function Verify({ ticker }: { ticker: string }) {
     return (
       <div className="flex items-baseline gap-3">
         <button onClick={check} disabled={state === 'checking'}
-                className="px-3 py-1 text-[13px] border border-rule hover:bg-surface disabled:opacity-40">
+                className="px-3 py-1 text-tiny border border-rule hover:bg-panel disabled:opacity-40">
           {state === 'checking' ? `Checking ${ticker}` : 'Do the accounts add up?'}
         </button>
-        {state === 'failed' ? <span className="text-[13px] text-expensive">could not check</span> : null}
+        {state === 'failed' ? <span className="text-tiny text-danger">could not check</span> : null}
       </div>
     )
   }
@@ -75,17 +75,17 @@ export function Verify({ ticker }: { ticker: string }) {
     <div className="max-w-2xl">
       {broken.length ? (
         <>
-          <p className="text-[15px] font-medium text-expensive">
+          <p className="text-base font-medium text-danger">
             {ticker}&rsquo;s own statements do not add up. Treat every figure in this note as unconfirmed.
           </p>
-          <p className="mt-1 text-[14px]">
+          <p className="mt-1 text-small">
             A filer whose statements stop reconciling has usually restated something, which is among the most
             informative things a company does and among the least announced. Worth finding out what changed
             before acting on anything here.
           </p>
           <ul className="mt-2 space-y-1">
             {broken.map((row, i) => (
-              <li key={i} className="text-[13px] text-expensive">
+              <li key={i} className="text-tiny text-danger">
                 {row.period_end}: {row.detail}
               </li>
             ))}
@@ -93,12 +93,12 @@ export function Verify({ ticker }: { ticker: string }) {
         </>
       ) : confirmed.length ? (
         <>
-          <p className="text-[15px]">
+          <p className="text-base">
             The figures behind this note come from statements that add up. Nothing to act on.
           </p>
           <ul className="mt-2 space-y-0.5">
             {confirmed.map(([name]) => (
-              <li key={name} className="text-[13.5px]">
+              <li key={name} className="text-small">
                 {MEANING[name]?.confirmed ?? name.replace(/_/g, ' ')}
                 <span className="text-muted"> — {MEANING[name]?.why ?? ''}</span>
               </li>
@@ -106,7 +106,7 @@ export function Verify({ ticker }: { ticker: string }) {
           </ul>
         </>
       ) : (
-        <p className="text-[15px] font-medium text-expensive">
+        <p className="text-base font-medium text-danger">
           Nothing could be checked, so none of these figures is confirmed. Read the note as unverified.
         </p>
       )}
@@ -114,14 +114,14 @@ export function Verify({ ticker }: { ticker: string }) {
       {absent.length ? (
         <ul className="mt-3 space-y-0.5">
           {absent.map(([name]) => (
-            <li key={name} className="text-[13px] text-muted">
+            <li key={name} className="text-tiny text-muted">
               {MEANING[name]?.absent ?? name.replace(/_/g, ' ')} — {MEANING[name]?.why ?? 'the inputs are not reported'}.
             </li>
           ))}
         </ul>
       ) : null}
 
-      <p className="mt-3 text-[12.5px] text-muted">
+      <p className="mt-3 text-tiny text-muted">
         Checked against {ticker}&rsquo;s own filed statements, not against an outside source. This says the
         numbers are internally consistent; it does not say the business is sound.
       </p>
