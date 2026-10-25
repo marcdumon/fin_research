@@ -75,3 +75,9 @@ def replies(filing_sources):
         'bull': _thesis('bull'), 'bear': _thesis('bear'), 'valuation': _valuation(),
         'synthesis': _report('doc-1', _quote(text['1'], 500)),
     }
+
+
+@pytest.fixture(autouse=True)
+def sec_contact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every SEC request of a test carries a test address, never the one in the user's .env."""
+    monkeypatch.setenv('SEC_CONTACT_EMAIL', 'tests@example.com')

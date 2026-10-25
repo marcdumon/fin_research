@@ -7,9 +7,12 @@ Nested frozen dataclasses rather than one flat bag, because the three concerns (
 routing) are read by different layers and a flat namespace would let any of them reach into the others.
 """
 
+import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import dotenv_values
 
 from fin_research import paths
 
@@ -17,8 +20,6 @@ _DEFAULT_DB = 'fin_research.duckdb'
 _DEFAULT_STATE_DB = 'state.sqlite'
 _DEFAULT_LOG_LEVEL = 'INFO'
 
-# SEC requires a declaring User-Agent with a contact address; anonymous clients get blocked.
-_DEFAULT_USER_AGENT = 'fin_research 7793950+marcdumon@users.noreply.github.com'
 _DEFAULT_RATE_LIMIT = 0.11
 _DEFAULT_CACHE_TTL_DAYS = 7
 
@@ -64,18 +65,30 @@ _DEFAULT_AGENT_TIERS = {
 }
 
 
+def sec_contact_email() -> str:
+    """The contact address SEC asks for in the User-Agent: SEC_CONTACT_EMAIL in .env (not in git, the repo is public).
+
+    SEC refuses a request without a real contact address (HTTP 403), so a missing address stops the request here.
+    """
+    email = os.environ.get('SEC_CONTACT_EMAIL') or dotenv_values(paths.PROJECT_ROOT / '.env').get('SEC_CONTACT_EMAIL')
+    if not email:
+        raise RuntimeError(f'SEC_CONTACT_EMAIL is not set: put your e-mail address in {paths.PROJECT_ROOT / ".env"} '
+                           '(SEC_CONTACT_EMAIL=name@example.com); SEC refuses requests without a contact address.')
+    return email
+
+
 @dataclass(frozen=True)
 class EdgarConfig:
     """How we talk to SEC EDGAR."""
 
-    user_agent: str = _DEFAULT_USER_AGENT
+    user_agent: str = ''
     rate_limit_seconds: float = _DEFAULT_RATE_LIMIT
     cache_ttl_days: int = _DEFAULT_CACHE_TTL_DAYS
 
     @property
     def headers(self) -> dict[str, str]:
         """Request headers every SEC call must carry."""
-        return {'User-Agent': self.user_agent}
+        return {'User-Agent': self.user_agent or f'fin_research {sec_contact_email()}'}
 
 
 @dataclass(frozen=True)
@@ -182,7 +195,7 @@ def read(path: Path | None = None) -> Config:
         log_level=raw.get('log_level', _DEFAULT_LOG_LEVEL),
         investalyze_db=_resolve(investalyze_raw) if investalyze_raw else None,
         edgar=EdgarConfig(
-            user_agent=edgar_raw.get('user_agent', _DEFAULT_USER_AGENT),
+            user_agent=edgar_raw.get('user_agent', ''),
             rate_limit_seconds=edgar_raw.get('rate_limit_seconds', _DEFAULT_RATE_LIMIT),
             cache_ttl_days=edgar_raw.get('cache_ttl_days', _DEFAULT_CACHE_TTL_DAYS),
         ),

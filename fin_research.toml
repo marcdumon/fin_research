@@ -6,8 +6,8 @@ state_db = 'state.sqlite'
 log_level = 'INFO'
 
 [edgar]
-# SEC blocks clients that do not declare a contact address, and rate-limits to 10 req/s.
-user_agent = 'fin_research 7793950+marcdumon@users.noreply.github.com'
+# SEC blocks clients that do not declare a contact address, and rate-limits to 10 req/s. The User-Agent carries
+# SEC_CONTACT_EMAIL of .env (not in git); a user_agent key here replaces the whole User-Agent.
 rate_limit_seconds = 0.11
 cache_ttl_days = 7
 
