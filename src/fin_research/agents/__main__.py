@@ -86,7 +86,7 @@ async def _run(args: argparse.Namespace) -> int:
                           numeric=outcome.numeric_outcomes,
                           valuation=outcome.valuation)
 
-        destination = args.out or paths.PROJECT_ROOT / 'reports' / f'{args.ticker}_{as_of}.md'
+        destination = args.out or paths.REPORTS_DIR / f'{args.ticker}_{as_of}.md'
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(markdown)
 
@@ -140,7 +140,7 @@ async def _check(args: argparse.Namespace) -> int:
     from fin_research.llm.client import ModelClient, ModelRequest
 
     cfg = read(args.config)
-    load_dotenv(paths.PROJECT_ROOT / '.env')
+    load_dotenv(paths.APP_DIR / '.env')
 
     # One representative agent per artifact type, so each schema is tried against the model it will meet.
     owners: dict[str, str] = {}
@@ -184,7 +184,7 @@ COMMAND_DESCRIPTIONS = {
 def main() -> int:
     """Parse arguments and run the requested command."""
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument('--config', type=Path, default=paths.PROJECT_ROOT / 'fin_research.toml')
+    common.add_argument('--config', type=Path, default=paths.SETTINGS_FILE)
     common.add_argument('--log-level', default='INFO')
 
     parser = argparse.ArgumentParser(prog='python -m fin_research.agents', description=__doc__, parents=[common])
@@ -208,7 +208,7 @@ def main() -> int:
     # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
     # calling frame's file, which silently finds nothing when the package is installed elsewhere
     # or invoked from another directory.
-    load_dotenv(paths.PROJECT_ROOT / '.env')
+    load_dotenv(paths.APP_DIR / '.env')
     return asyncio.run(COMMANDS[args.command](args))
 
 

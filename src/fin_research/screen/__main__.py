@@ -103,7 +103,7 @@ async def _funnel(args: argparse.Namespace) -> int:
     # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
     # calling frame's file, which silently finds nothing when the package is installed elsewhere
     # or invoked from another directory.
-    load_dotenv(paths.PROJECT_ROOT / '.env')
+    load_dotenv(paths.APP_DIR / '.env')
     cfg = read(args.config)
     screens = rules.load(args.screens)
     if args.screen not in screens:
@@ -171,8 +171,8 @@ COMMAND_DESCRIPTIONS = {
 def main() -> int:
     """Parse arguments and run the requested command."""
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument('--config', type=Path, default=paths.PROJECT_ROOT / 'fin_research.toml')
-    common.add_argument('--screens', type=Path, default=paths.PROJECT_ROOT / 'screens.toml')
+    common.add_argument('--config', type=Path, default=paths.SETTINGS_FILE)
+    common.add_argument('--screens', type=Path, default=paths.SCREENS_FILE)
     common.add_argument('--log-level', default='WARNING')
 
     parser = argparse.ArgumentParser(prog='python -m fin_research.screen', description=__doc__, parents=[common])

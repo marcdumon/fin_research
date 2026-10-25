@@ -1,9 +1,17 @@
 # MD> Non-secret settings only. The OpenRouter API key comes from the environment (.env), NOT here.
+# Copy this file to fin_research.toml (not in git) and set your own values.
 
-data_root = 'data'
+# the folder of the filings, the DuckDB store, the run ledger and the reports (put it where your backups are made);
+# empty: the folder data in the app folder
+# for example data_dir = '/path/to/backed_up/fin_research'
+data_dir = ''
 db = 'fin_research.duckdb'
 state_db = 'state.sqlite'
 log_level = 'INFO'
+
+[server]
+# the dashboard answers on http://127.0.0.1:<port> only
+port = 8000
 
 [edgar]
 # SEC blocks clients that do not declare a contact address, and rate-limits to 10 req/s. The User-Agent carries
@@ -13,7 +21,8 @@ cache_ttl_days = 7
 
 [investalyze]
 # Attached READ_ONLY for prices/fundamentals. Must be a DuckDB >=1.5.4 file; format is version-sensitive.
-db_path = '/mnt/Dev/active_python_projects/investalyze/data/investalyze.duckdb'
+# for example db_path = '/path/to/investalyze/data/investalyze.duckdb'
+db_path = ''
 
 [llm]
 base_url = 'https://openrouter.ai/api/v1'

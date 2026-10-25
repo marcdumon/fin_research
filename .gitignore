@@ -17,3 +17,6 @@ reports/
 frontend/node_modules/
 frontend/dist/
 src/fin_research/web/static/
+
+# Own settings (fin_research.example.toml shows them)
+fin_research.toml

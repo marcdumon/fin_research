@@ -7,6 +7,7 @@ published before its period ended, and a restatement carrying a later correction
 """
 
 from datetime import date
+from pathlib import Path
 
 import duckdb
 import pandas as pd
@@ -155,8 +156,7 @@ def test_a_screen_naming_an_unknown_factor_fails_loudly():
 
 def test_shipped_screens_are_valid():
     """The screens that ship must parse and reference real factors."""
-    from fin_research import paths
-    screens = rules.load(paths.PROJECT_ROOT / 'screens.toml')
+    screens = rules.load(Path(__file__).parents[1] / 'screens.toml')
     assert screens
     for screen in screens.values():
         assert screen.require, f'{screen.name} filters nothing'

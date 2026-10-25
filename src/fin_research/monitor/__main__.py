@@ -124,7 +124,7 @@ COMMAND_DESCRIPTIONS = {
 def main() -> int:
     """Parse arguments and run the requested command."""
     common = argparse.ArgumentParser(add_help=False)
-    common.add_argument('--config', type=Path, default=paths.PROJECT_ROOT / 'fin_research.toml')
+    common.add_argument('--config', type=Path, default=paths.SETTINGS_FILE)
     common.add_argument('--log-level', default='WARNING')
 
     parser = argparse.ArgumentParser(prog='python -m fin_research.monitor', description=__doc__,
@@ -140,7 +140,7 @@ def main() -> int:
         if name == 'patrol':
             sub.add_argument('--tickers', nargs='+', help='patrol these instead of the watchlist')
             sub.add_argument('--as-of', help='patrol as the world looked on this date')
-            sub.add_argument('--screens', type=Path, default=paths.PROJECT_ROOT / 'screens.toml')
+            sub.add_argument('--screens', type=Path, default=paths.SCREENS_FILE)
             sub.add_argument('--only', nargs='+', choices=list(CHECK_DESCRIPTIONS),
                              help='run only these checks')
         if name in ('alerts', 'ack'):

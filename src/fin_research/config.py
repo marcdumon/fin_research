@@ -70,9 +70,9 @@ def sec_contact_email() -> str:
 
     SEC refuses a request without a real contact address (HTTP 403), so a missing address stops the request here.
     """
-    email = os.environ.get('SEC_CONTACT_EMAIL') or dotenv_values(paths.PROJECT_ROOT / '.env').get('SEC_CONTACT_EMAIL')
+    email = os.environ.get('SEC_CONTACT_EMAIL') or dotenv_values(paths.APP_DIR / '.env').get('SEC_CONTACT_EMAIL')
     if not email:
-        raise RuntimeError(f'SEC_CONTACT_EMAIL is not set: put your e-mail address in {paths.PROJECT_ROOT / ".env"} '
+        raise RuntimeError(f'SEC_CONTACT_EMAIL is not set: put your e-mail address in {paths.APP_DIR / ".env"} '
                            '(SEC_CONTACT_EMAIL=name@example.com); SEC refuses requests without a contact address.')
     return email
 
@@ -189,7 +189,7 @@ def read(path: Path | None = None) -> Config:
     investalyze_raw = raw.get('investalyze', {}).get('db_path')
 
     return Config(
-        data_root=_resolve(raw['data_root']) if 'data_root' in raw else paths.DATA_ROOT,
+        data_root=_resolve(raw['data_dir']) if raw.get('data_dir') else paths.DATA_ROOT,
         db=raw.get('db', _DEFAULT_DB),
         state_db=raw.get('state_db', _DEFAULT_STATE_DB),
         log_level=raw.get('log_level', _DEFAULT_LOG_LEVEL),

@@ -80,15 +80,30 @@ Everything is reachable from the dashboard: start a run, screen a universe, read
 watchlist, verify a company's accounts, and answer approval gates. The command line does the same things and
 is useful for scripting, but nothing requires it.
 
+## Install
+
+The app runs from its own folder, apart from this repo. `install.sh` installs one version (a git tag) from GitHub in a
+Python environment in `~/.local/share/md_apps/fin_research/` (or `$FIN_RESEARCH_HOME`). It needs uv, npm and curl.
+
 ```bash
-uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
+./install.sh v0.1.0                                        # also to update: an update replaces only env/
+~/.local/share/md_apps/fin_research/env/bin/fin-research   # the dashboard, at http://127.0.0.1:8000
 ```
 
-### From a terminal
+The app folder holds the settings: `fin_research.toml` (`data_dir`, the port, the investalyze database),
+`screens.toml` (the first install makes both from this repo) and `.env` (OPENROUTER_API_KEY and SEC_CONTACT_EMAIL, see
+`.env.example`). `data_dir` sets the data folder: the filings, the DuckDB store, the run ledger and the reports. Put it
+where your backups are made; empty, it is `data/` in the app folder.
+
+## Development
+
+This repo is the app folder of the development copy. Copy `fin_research.example.toml` to `fin_research.toml` (not in
+git) and give it its own port, for example 18000, so it can run next to the installed app; `npm run dev` in
+`frontend/` proxies `/api` to 18000.
 
 ```bash
 uv sync
-cp .env.example .env          # add OPENROUTER_API_KEY
+cp .env.example .env          # add OPENROUTER_API_KEY and SEC_CONTACT_EMAIL
 
 # Fetch and normalise. No model involved, so this is free and cacheable. A research run does this
 # for itself when a company has not been read before, so it is only needed to prepare ahead of time.
@@ -118,7 +133,7 @@ uv run python -m fin_research.agents run --ticker AAPL --budget 2.00 --gate expe
 uv run python -m fin_research.agents cost
 
 # Watch it work, start runs, answer the gates, and read what the monitor found.
-uv run uvicorn fin_research.web.api:app --port 8000   # http://127.0.0.1:8000
+uv run fin-research            # the dashboard, at the port of fin_research.toml
 ```
 
 ## Layout

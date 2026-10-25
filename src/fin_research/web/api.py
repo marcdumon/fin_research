@@ -120,7 +120,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     A factory rather than a module-level app so tests can point it at a throwaway database instead of the
     real one.
     """
-    settings = cfg or read(paths.PROJECT_ROOT / 'fin_research.toml')
+    settings = cfg or read(paths.SETTINGS_FILE)
     app = FastAPI(title='fin_research', docs_url='/api/docs')
 
     def state() -> State:
@@ -207,7 +207,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
     @app.get('/api/reports/{ticker}')
     def get_report(ticker: str) -> FileResponse:
         """The most recent written note for a company."""
-        directory = paths.PROJECT_ROOT / 'reports'
+        directory = paths.REPORTS_DIR
         found = sorted(directory.glob(f'{ticker.upper()}_*.md'), reverse=True)
         if not found:
             raise HTTPException(404, f'no report for {ticker}')
@@ -262,7 +262,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         handle = log_file.open('w')
 
         process = await asyncio.create_subprocess_exec(
-            *command, cwd=paths.PROJECT_ROOT, stdout=handle, stderr=asyncio.subprocess.STDOUT)
+            *command, cwd=paths.APP_DIR, stdout=handle, stderr=asyncio.subprocess.STDOUT)
 
         # The run registers itself on startup, so the dashboard is told which row to follow rather than
         # having to guess which of several concurrent runs it just caused.
@@ -329,7 +329,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         logs.mkdir(parents=True, exist_ok=True)
         log_file = logs / f'{name}-{datetime.now().strftime("%Y%m%d-%H%M%S")}.log'
         handle = log_file.open('w')
-        process = subprocess.Popen([sys.executable, '-m', *command], cwd=paths.PROJECT_ROOT,
+        process = subprocess.Popen([sys.executable, '-m', *command], cwd=paths.APP_DIR,
                                    stdout=handle, stderr=subprocess.STDOUT)
         jobs[process.pid] = process
         return {'pid': process.pid, 'log': str(log_file)}
@@ -348,7 +348,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         """The screens that are defined, and what each one requires."""
         from fin_research.screen import rules
 
-        path = paths.PROJECT_ROOT / 'screens.toml'
+        path = paths.SCREENS_FILE
         if not path.exists():
             return []
         return [{'name': screen.name, 'description': screen.description,
@@ -366,7 +366,7 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         """
         from fin_research.screen import factors, rules
 
-        screens = rules.load(paths.PROJECT_ROOT / 'screens.toml')
+        screens = rules.load(paths.SCREENS_FILE)
         if name not in screens:
             raise HTTPException(404, f'no screen named {name!r}')
 
@@ -603,3 +603,10 @@ def create_app(cfg: Config | None = None) -> FastAPI:
 
 
 app = create_app()
+
+
+def main() -> None:
+    """Serve the dashboard on localhost at the port of fin_research.toml (the start command fin-research)."""
+    import uvicorn
+
+    uvicorn.run(app, host='127.0.0.1', port=paths.server_port())
