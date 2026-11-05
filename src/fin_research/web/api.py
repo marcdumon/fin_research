@@ -11,10 +11,13 @@ written down here because it stops holding the moment anyone exposes the port.
 
 import asyncio
 import logging
+import os
 import subprocess
 import sys
 from datetime import date, datetime
 from pathlib import Path
+import threading
+import time
 from typing import Literal
 
 import duckdb
@@ -114,6 +117,12 @@ class Verdict(BaseModel):
     run_id: str | None = None
 
 
+def _restart_soon() -> None:
+    """Replace this process by a fresh start of the same command, half a second after the answer went out."""
+    time.sleep(0.5)
+    os.execv(sys.executable, sys.orig_argv)
+
+
 def create_app(cfg: Config | None = None) -> FastAPI:
     """Build the dashboard application.
 
@@ -130,6 +139,12 @@ def create_app(cfg: Config | None = None) -> FastAPI:
         in a server would be one more thing to invalidate when a run process rewrites the file.
         """
         return State(settings.state_path)
+
+    @app.post('/api/restart')
+    def restart() -> dict:
+        """Start the server again with the same command: this process is replaced once the answer has gone out."""
+        threading.Thread(target=_restart_soon, daemon=True).start()
+        return {'restarting': True}
 
     @app.get('/api/runs')
     def list_runs(limit: int = 50) -> list[dict]:

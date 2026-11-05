@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, useLocation } from 'wouter'
 import { applyTheme, storedTheme, type Theme } from '../../lib/theme'
 import { Approvals } from './Approvals'
+import RestartButton from './RestartButton'
 
 function Moon() {
   return (
@@ -68,6 +69,8 @@ export function TopBar({ onCommand, liveRuns }: { onCommand: () => void; liveRun
           {liveRuns} running
         </span>
       )}
+
+      <RestartButton className="mr-2 px-2.5 py-1 whitespace-nowrap text-small text-muted border border-rule rounded-sm hover:text-ink hover:border-rule-strong disabled:opacity-60" />
 
       <button
         onClick={onCommand}
