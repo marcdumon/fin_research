@@ -70,9 +70,9 @@ def sec_contact_email() -> str:
 
     SEC refuses a request without a real contact address (HTTP 403), so a missing address stops the request here.
     """
-    email = os.environ.get('SEC_CONTACT_EMAIL') or dotenv_values(paths.APP_DIR / '.env').get('SEC_CONTACT_EMAIL')
+    email = os.environ.get('SEC_CONTACT_EMAIL') or dotenv_values(paths.CONFIG_DIR / '.env').get('SEC_CONTACT_EMAIL')
     if not email:
-        raise RuntimeError(f'SEC_CONTACT_EMAIL is not set: put your e-mail address in {paths.APP_DIR / ".env"} '
+        raise RuntimeError(f'SEC_CONTACT_EMAIL is not set: put your e-mail address in {paths.CONFIG_DIR / ".env"} '
                            '(SEC_CONTACT_EMAIL=name@example.com); SEC refuses requests without a contact address.')
     return email
 

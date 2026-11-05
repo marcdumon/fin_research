@@ -90,7 +90,7 @@ Python environment in `~/.local/share/md_apps/fin_research/` (or `$FIN_RESEARCH_
 ~/.local/share/md_apps/fin_research/env/bin/fin-research   # the dashboard, at http://127.0.0.1:8000
 ```
 
-The app folder holds the settings: `fin_research.toml` (`data_dir`, the port, the investalyze database),
+`~/.config/md_apps/fin_research/` holds the settings: `fin_research.toml` (`data_dir`, the port, the investalyze database),
 `screens.toml` (the first install makes both from this repo) and `.env` (OPENROUTER_API_KEY and SEC_CONTACT_EMAIL, see
 `.env.example`). `data_dir` sets the data folder: the filings, the DuckDB store, the run ledger and the reports. Put it
 where your backups are made; empty, it is `data/` in the app folder.

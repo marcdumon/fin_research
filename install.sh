@@ -7,6 +7,7 @@ set -euo pipefail
 
 VERSION=${1:?Give the version to install, for example: ./install.sh v0.1.0}
 APP=${FIN_RESEARCH_HOME:-$HOME/.local/share/md_apps/fin_research}
+CONFIG=$HOME/.config/md_apps/fin_research
 REPO=marcdumon/fin_research
 
 for tool in uv npm curl; do
@@ -14,12 +15,14 @@ for tool in uv npm curl; do
 done
 
 mkdir -p "$APP"
+mkdir -p "$CONFIG"
+chmod 700 "$CONFIG"
 [[ -d $APP/env ]] || uv venv --quiet --python 3.13 "$APP/env"
 echo "Installing fin_research $VERSION in $APP/env ..."
 uv pip install --quiet --python "$APP/env/bin/python" --reinstall-package fin-research "git+https://github.com/$REPO@$VERSION"
 
 for name in fin_research.example screens; do
-    target=$APP/${name%.example}.toml
+    target=$CONFIG/${name%.example}.toml
     if [[ ! -f $target ]]; then
         curl -sfL "https://raw.githubusercontent.com/$REPO/$VERSION/$name.toml" -o "$target"
         echo "Made $target: set your own values in it."

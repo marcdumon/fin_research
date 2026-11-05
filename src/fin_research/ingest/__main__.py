@@ -162,7 +162,7 @@ def main() -> int:
     # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
     # calling frame's file, which silently finds nothing when the package is installed elsewhere
     # or invoked from another directory.
-    load_dotenv(paths.APP_DIR / '.env')
+    load_dotenv(paths.CONFIG_DIR / '.env')
     return asyncio.run(COMMANDS[args.command](args))
 
 

@@ -140,7 +140,7 @@ async def _check(args: argparse.Namespace) -> int:
     from fin_research.llm.client import ModelClient, ModelRequest
 
     cfg = read(args.config)
-    load_dotenv(paths.APP_DIR / '.env')
+    load_dotenv(paths.CONFIG_DIR / '.env')
 
     # One representative agent per artifact type, so each schema is tried against the model it will meet.
     owners: dict[str, str] = {}
@@ -208,7 +208,7 @@ def main() -> int:
     # Resolved from the project root rather than searched for: `find_dotenv` walks up from the
     # calling frame's file, which silently finds nothing when the package is installed elsewhere
     # or invoked from another directory.
-    load_dotenv(paths.APP_DIR / '.env')
+    load_dotenv(paths.CONFIG_DIR / '.env')
     return asyncio.run(COMMANDS[args.command](args))
 
 

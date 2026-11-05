@@ -1,8 +1,7 @@
 """Where everything lives on disk.
 
-One module so no other file ever builds a path from `__file__`. The app folder is the folder of the Python environment
-(the repo in development, the install folder of an installed app): it holds `fin_research.toml` (not in git),
-`screens.toml` and `.env`. The data folder is `data_dir` of `fin_research.toml`: the filings, the DuckDB store, the run
+One module so no other file ever builds a path from `__file__`. The config folder ~/.config/md_apps/fin_research (the repo in development) holds
+`fin_research.toml`, `screens.toml` and `.env`. The app folder is the folder of the Python environment. The data folder is `data_dir` of `fin_research.toml`: the filings, the DuckDB store, the run
 ledger and the reports.
 """
 
@@ -11,8 +10,10 @@ import tomllib
 from pathlib import Path
 
 APP_DIR = Path(sys.prefix).parent
-SETTINGS_FILE = APP_DIR / 'fin_research.toml'
-SCREENS_FILE = APP_DIR / 'screens.toml'
+# an installed app keeps its settings in ~/.config; a development copy (a repo) keeps its own, next to the code
+CONFIG_DIR = APP_DIR if (APP_DIR / 'pyproject.toml').is_file() else Path.home() / '.config' / 'md_apps' / 'fin_research'
+SETTINGS_FILE = CONFIG_DIR / 'fin_research.toml'
+SCREENS_FILE = CONFIG_DIR / 'screens.toml'
 FIXTURES = Path(__file__).resolve().parents[2] / 'tests' / 'fixtures'
 
 
